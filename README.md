@@ -39,9 +39,9 @@ Los datos no se guardan dentro de la instalación:
 
 Desinstalar el programa conserva la biblioteca, la base de datos, los logs y los MP3 del usuario.
 
-## iPhone: PWA y servidor personal del PC
+## iPhone: PWA y Google Drive
 
-La carpeta `prototype/` contiene una PWA instalable desde Safari. Puede importar audio desde **Archivos** y también usar el PC para buscar, descargar y convertir contenido autorizado. El PC realiza el trabajo con `yt-dlp` y `ffmpeg`; el iPhone solo controla la cola y copia el MP3 terminado a su biblioteca local.
+La carpeta `prototype/` contiene una PWA instalable desde Safari. La aplicación de Windows busca, descarga y convierte contenido autorizado; Google Drive sincroniza los MP3 con el iPhone; la PWA los importa para reproducirlos sin conexión.
 
 Para instalar la PWA:
 
@@ -49,25 +49,18 @@ Para instalar la PWA:
 2. Abre `https://gerardferri.github.io/Spotify-Offline/` con Safari.
 3. Pulsa **Compartir > Añadir a pantalla de inicio**.
 
-### Conectar el iPhone con el PC
+### Sincronizar la música con Google Drive
 
-Se usa Tailscale para crear una conexión HTTPS privada, sin abrir puertos del router:
+No se usan contraseñas ni una API de Google dentro de YT-MP3 Studio. Google Drive para ordenador se ocupa de sincronizar la carpeta que eliges.
 
-1. Instala Tailscale en Windows y en el iPhone e inicia sesión con la misma cuenta en ambos.
-2. En Windows, abre PowerShell en la carpeta del proyecto y ejecuta:
+1. Instala Google Drive para ordenador en Windows e inicia sesión con la cuenta que usarás para la música.
+2. Abre YT-MP3 Studio en Windows y entra en **Configuración**.
+3. Pulsa **Usar carpeta de Google Drive…**, selecciona la carpeta **Mi unidad** de Google Drive y pulsa **Guardar configuración**. La aplicación creará y usará la subcarpeta `YT-MP3 Studio`.
+4. Descarga música en la aplicación de Windows. Google Drive la subirá automáticamente desde esa carpeta.
+5. En el iPhone, instala Google Drive e inicia sesión con la misma cuenta. En **Archivos > Explorar > Más > Editar**, activa Google Drive si todavía no aparece.
+6. Abre la PWA, entra en **Biblioteca > Importar audio**, elige Google Drive y selecciona los MP3 que quieras guardar offline en el iPhone.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-mobile-server.ps1
-   ```
-
-3. La primera vez, Tailscale puede mostrar un enlace para habilitar HTTPS. Ábrelo y autoriza **Tailscale Serve**. El comando mostrará una dirección parecida a `https://nombre-pc.tailnet.ts.net`.
-4. Mantén la ventana de PowerShell abierta. Copia la dirección HTTPS y la clave que aparece al arrancar.
-5. En la PWA, entra en **Ajustes > Servidor del PC**, pega ambos valores, guarda y pulsa **Probar conexión**.
-6. Busca una canción, envíala al PC y, cuando termine, pulsa **Guardar en iPhone**.
-
-El PC debe estar encendido, conectado a Internet y con el servidor abierto durante la búsqueda y descarga. Tailscale debe estar conectado en ambos dispositivos. No expongas el puerto `8766` en el router ni uses Tailscale Funnel: la API está diseñada para acceso privado y además exige una clave aleatoria.
-
-Los MP3 guardados en la PWA viven en IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
+Los MP3 se almacenan en Google Drive y, al importarlos, se copia una versión a IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
 
 Para probar solo la interfaz en el PC:
 

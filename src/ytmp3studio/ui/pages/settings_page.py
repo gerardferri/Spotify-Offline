@@ -22,6 +22,9 @@ class SettingsPage(QWidget):
         self.download_dir.setAccessibleName("Carpeta de descargas")
         browse = QPushButton("Elegir…")
         browse.setProperty("secondary", True)
+        self.google_drive = QPushButton("Usar carpeta de Google Drive…")
+        self.google_drive.setProperty("secondary", True)
+        self.google_drive.setAccessibleName("Elegir carpeta de Google Drive")
         folder_row = QHBoxLayout()
         folder_row.addWidget(self.download_dir, 1)
         folder_row.addWidget(browse)
@@ -57,12 +60,16 @@ class SettingsPage(QWidget):
         preferences_layout.setSpacing(12)
         preferences_title = QLabel("Preferencias de descarga")
         preferences_title.setProperty("subheading", True)
-        preferences_hint = QLabel("Define el formato, destino y comportamiento de la cola.")
+        preferences_hint = QLabel(
+            "Elige una carpeta de Google Drive para que los MP3 se suban automáticamente. "
+            "Google Drive para ordenador debe estar instalado y sincronizado."
+        )
         preferences_hint.setProperty("muted", True)
         form = QFormLayout()
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow("Carpeta de descargas", folder_row)
+        form.addRow("Sincronización", self.google_drive)
         form.addRow("Calidad MP3", self.quality)
         form.addRow("Tema", self.theme)
         form.addRow("Descargas simultáneas", self.concurrency)
@@ -105,6 +112,7 @@ class SettingsPage(QWidget):
         layout.addStretch()
 
         browse.clicked.connect(self._browse)
+        self.google_drive.clicked.connect(self._choose_google_drive)
         self.save.clicked.connect(self._save)
         self.check.clicked.connect(self._check_dependencies)
         facade.settings_changed.connect(self.set_settings)
@@ -146,6 +154,18 @@ class SettingsPage(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Elegir carpeta de descargas", initial)
         if path:
             self.download_dir.setText(path)
+
+    def _choose_google_drive(self) -> None:
+        initial = self.download_dir.text() if Path(self.download_dir.text()).exists() else str(Path.home())
+        root = QFileDialog.getExistingDirectory(
+            self,
+            "Selecciona la carpeta 'Mi unidad' de Google Drive",
+            initial,
+        )
+        if root:
+            self.download_dir.setText(str(Path(root) / "YT-MP3 Studio"))
+            self.feedback.clear()
+            self.saved.setText("Google Drive seleccionado. Pulsa Guardar configuración.")
 
     def _save(self) -> None:
         path = self.download_dir.text().strip()

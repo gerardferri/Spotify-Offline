@@ -194,6 +194,20 @@ def test_settings_sends_complete_valid_patch(qapp, tmp_path):
     }
 
 
+def test_settings_google_drive_uses_a_dedicated_music_folder(qapp, tmp_path, monkeypatch):
+    facade = FakeFacade()
+    page = SettingsPage(facade)
+    monkeypatch.setattr(
+        "ytmp3studio.ui.pages.settings_page.QFileDialog.getExistingDirectory",
+        lambda *_args: str(tmp_path),
+    )
+
+    page._choose_google_drive()
+
+    assert page.download_dir.text() == str(tmp_path / "YT-MP3 Studio")
+    assert page.saved.text() == "Google Drive seleccionado. Pulsa Guardar configuración."
+
+
 def test_library_paginates_and_reveals_selected_track(qapp, tmp_path):
     facade = FakeFacade()
     page = LibraryPage(facade)
