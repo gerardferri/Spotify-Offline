@@ -6,3 +6,7 @@ build/
 dist/
 tools/ffmpeg.exe
 *.log
+.env
+.env.*
+!*.env.example
+*mobile-server-token*

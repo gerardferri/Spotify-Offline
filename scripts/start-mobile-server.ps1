@@ -1,6 +1,7 @@
 param(
     [int]$Port = 8766,
-    [switch]$SkipTailscale
+    [switch]$SkipTailscale,
+    [switch]$RegenerateToken
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,8 +35,16 @@ if (-not $SkipTailscale) {
         & $tailscalePath serve --bg "http://127.0.0.1:$Port"
         & $tailscalePath serve status
     } else {
-        Write-Warning "Tailscale no está instalado o no está en PATH. El servidor solo será accesible desde este PC."
+        throw "Tailscale no está instalado. Instálalo desde https://tailscale.com/download/windows y vuelve a ejecutar el lanzador."
     }
+}
+
+if ($RegenerateToken) {
+    $tokenPath = Join-Path $env:LOCALAPPDATA "YT-MP3 Studio\mobile-server-token.txt"
+    if (Test-Path -LiteralPath $tokenPath) {
+        Remove-Item -LiteralPath $tokenPath -Force
+    }
+    Write-Host "Se generará una clave personal nueva." -ForegroundColor Yellow
 }
 
 Write-Host "Iniciando YT-MP3 Studio para iPhone..." -ForegroundColor Green
