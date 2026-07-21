@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from ytmp3studio.ui.widgets.common import FeedbackLabel
@@ -22,8 +22,7 @@ class SettingsPage(QWidget):
         self.download_dir.setAccessibleName("Carpeta de descargas")
         browse = QPushButton("Elegir…")
         browse.setProperty("secondary", True)
-        self.google_drive = QPushButton("Usar carpeta de Google Drive…")
-        self.google_drive.setProperty("secondary", True)
+        self.google_drive = QPushButton("Elegir carpeta de Google Drive…")
         self.google_drive.setAccessibleName("Elegir carpeta de Google Drive")
         folder_row = QHBoxLayout()
         folder_row.addWidget(self.download_dir, 1)
@@ -60,24 +59,55 @@ class SettingsPage(QWidget):
         preferences_layout.setSpacing(12)
         preferences_title = QLabel("Preferencias de descarga")
         preferences_title.setProperty("subheading", True)
-        preferences_hint = QLabel(
-            "Elige una carpeta de Google Drive para que los MP3 se suban automáticamente. "
-            "Google Drive para ordenador debe estar instalado y sincronizado."
-        )
+        preferences_hint = QLabel("Elige dónde guardar tus MP3 y la calidad que prefieres.")
         preferences_hint.setProperty("muted", True)
         form = QFormLayout()
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow("Carpeta de descargas", folder_row)
-        form.addRow("Sincronización", self.google_drive)
         form.addRow("Calidad MP3", self.quality)
         form.addRow("Tema", self.theme)
-        form.addRow("Descargas simultáneas", self.concurrency)
-        form.addRow("Reintentos automáticos", self.retries)
-        form.addRow("Espera base", self.retry_base)
         preferences_layout.addWidget(preferences_title)
         preferences_layout.addWidget(preferences_hint)
         preferences_layout.addLayout(form)
+
+        drive = QFrame()
+        drive.setObjectName("driveCard")
+        drive_layout = QVBoxLayout(drive)
+        drive_layout.setContentsMargins(18, 16, 18, 18)
+        drive_layout.setSpacing(8)
+        drive_title = QLabel("Lleva tu música al iPhone con Google Drive")
+        drive_title.setProperty("subheading", True)
+        drive_intro = QLabel(
+            "1. Elige aquí tu carpeta Mi unidad.  2. Descarga música y espera a que Drive la sincronice.  "
+            "3. En el iPhone, importa las canciones desde Archivos."
+        )
+        drive_intro.setWordWrap(True)
+        drive_intro.setProperty("muted", True)
+        self.drive_status = QLabel("Google Drive para ordenador debe estar instalado y con tu sesión iniciada.")
+        self.drive_status.setWordWrap(True)
+        self.drive_status.setProperty("muted", True)
+        drive_actions = QHBoxLayout()
+        drive_actions.addWidget(self.google_drive)
+        drive_actions.addStretch()
+        drive_layout.addWidget(drive_title)
+        drive_layout.addWidget(drive_intro)
+        drive_layout.addWidget(self.drive_status)
+        drive_layout.addLayout(drive_actions)
+
+        self.advanced_toggle = QPushButton("Mostrar opciones avanzadas")
+        self.advanced_toggle.setProperty("secondary", True)
+        self.advanced_toggle.setCheckable(True)
+        self.advanced = QFrame()
+        self.advanced.setObjectName("settingsCard")
+        advanced_layout = QFormLayout(self.advanced)
+        advanced_layout.setContentsMargins(18, 16, 18, 16)
+        advanced_layout.setHorizontalSpacing(18)
+        advanced_layout.setVerticalSpacing(12)
+        advanced_layout.addRow("Descargas simultáneas", self.concurrency)
+        advanced_layout.addRow("Reintentos automáticos", self.retries)
+        advanced_layout.addRow("Espera base", self.retry_base)
+        self.advanced.hide()
 
         tools = QFrame()
         tools.setObjectName("settingsCard")
@@ -104,7 +134,10 @@ class SettingsPage(QWidget):
         layout.addWidget(heading)
         layout.addWidget(intro)
         layout.addSpacing(6)
+        layout.addWidget(drive)
         layout.addWidget(preferences)
+        layout.addWidget(self.advanced_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.advanced)
         layout.addWidget(self.feedback)
         layout.addWidget(self.saved)
         layout.addWidget(tools)
@@ -113,6 +146,7 @@ class SettingsPage(QWidget):
 
         browse.clicked.connect(self._browse)
         self.google_drive.clicked.connect(self._choose_google_drive)
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
         self.save.clicked.connect(self._save)
         self.check.clicked.connect(self._check_dependencies)
         facade.settings_changed.connect(self.set_settings)
@@ -163,9 +197,16 @@ class SettingsPage(QWidget):
             initial,
         )
         if root:
-            self.download_dir.setText(str(Path(root) / "YT-MP3 Studio"))
+            selected = Path(root)
+            target = selected if selected.name.casefold() == "yt-mp3 studio" else selected / "YT-MP3 Studio"
+            self.download_dir.setText(str(target))
             self.feedback.clear()
+            self.drive_status.setText(f"Carpeta preparada: {target}")
             self.saved.setText("Google Drive seleccionado. Pulsa Guardar configuración.")
+
+    def _toggle_advanced(self, visible: bool) -> None:
+        self.advanced.setVisible(visible)
+        self.advanced_toggle.setText("Ocultar opciones avanzadas" if visible else "Mostrar opciones avanzadas")
 
     def _save(self) -> None:
         path = self.download_dir.text().strip()

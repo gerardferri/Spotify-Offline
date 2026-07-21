@@ -2,6 +2,7 @@
 // cambiar este identificador para publicar cambios posteriores.
 const CACHE = 'ytmp3-studio-shell-v4';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg'];
+const SHELL_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.href).pathname));
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(Promise.all([
   caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))),
@@ -12,7 +13,15 @@ self.addEventListener('activate', event => event.waitUntil(Promise.all([
 // Así GitHub Pages puede actualizar HTML, CSS y JavaScript sin una subida de
 // versión manual de la caché. Si no hay red, se conserva el modo offline.
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+
+  // Las respuestas de la API y el audio deben llegar siempre desde el PC.
+  // Guardarlas aquí duplicaría canciones y podría servir colas desactualizadas.
+  if (url.pathname.startsWith(`${self.registration.scope.replace(self.location.origin, '')}api/`)) return;
+
+  const isNavigation = event.request.mode === 'navigate';
+  if (!isNavigation && !SHELL_PATHS.has(url.pathname)) return;
 
   event.respondWith((async () => {
     try {
@@ -23,7 +32,7 @@ self.addEventListener('fetch', event => {
       }
       return response;
     } catch {
-      return (await caches.match(event.request)) || (event.request.mode === 'navigate' && await caches.match('./index.html')) || Response.error();
+      return (await caches.match(event.request)) || (isNavigation && await caches.match('./index.html')) || Response.error();
     }
   })());
 });

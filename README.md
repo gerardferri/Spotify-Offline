@@ -39,6 +39,12 @@ Los datos no se guardan dentro de la instalación:
 
 Desinstalar el programa conserva la biblioteca, la base de datos, los logs y los MP3 del usuario.
 
+## Aplicación web local para PC
+
+Puedes usar YT-MP3 Studio en el navegador sin instalar ni abrir el archivo `.exe`: haz doble clic en `ABRIR-YT-MP3-STUDIO-WEB.cmd`. Se abrirá `http://127.0.0.1:8766` y esa ventana debe mantenerse abierta mientras uses la aplicación.
+
+La web usa el mismo motor de búsqueda, cola, descargas y biblioteca que la aplicación Windows. El servidor se limita a `127.0.0.1`, así que solo es accesible desde ese mismo PC: no se abre ningún puerto del router ni se publica tu biblioteca en GitHub. Requiere el repositorio y Python/dependencias instalados (por ejemplo, la carpeta `.venv` de desarrollo).
+
 ## iPhone: PWA y Google Drive
 
 La carpeta `prototype/` contiene una PWA instalable desde Safari. La aplicación de Windows busca, descarga y convierte contenido autorizado; Google Drive sincroniza los MP3 con el iPhone; la PWA los importa para reproducirlos sin conexión.
@@ -62,13 +68,7 @@ No se usan contraseñas ni una API de Google dentro de YT-MP3 Studio. Google Dri
 
 Los MP3 se almacenan en Google Drive y, al importarlos, se copia una versión a IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
 
-Para probar solo la interfaz en el PC:
-
-```powershell
-python -m http.server 8765 --directory prototype
-```
-
-Abre `http://localhost:8765`. El service worker solo se registra en un origen seguro o en `localhost`.
+La PWA también funciona como web local completa del PC mediante `ABRIR-YT-MP3-STUDIO-WEB.cmd`; ya no hace falta ejecutar un servidor estático aparte. El service worker solo se registra en un origen seguro o en `localhost`.
 
 ## Desarrollo
 

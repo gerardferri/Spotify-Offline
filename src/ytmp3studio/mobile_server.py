@@ -1,8 +1,10 @@
-"""Personal HTTP API used by the iPhone PWA.
+"""Personal HTTP API and local web app for YT-MP3 Studio.
 
 The server binds to loopback by default. Expose it through a private HTTPS
 transport such as Tailscale Serve; do not forward the port on the router.
-Every API request requires the persistent bearer token printed at startup.
+The iPhone API requires a persistent bearer token. ``--web`` also serves the
+PWA on the same loopback-only address, so it can be used directly from a PC
+browser without exposing a port or requiring a token in that browser.
 """
 
 from __future__ import annotations
@@ -19,8 +21,10 @@ import mimetypes
 from pathlib import Path
 import secrets
 import sys
+from threading import Timer
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
+import webbrowser
 
 from ytmp3studio.backend.adapters.ffmpeg_adapter import FfmpegAdapter
 from ytmp3studio.backend.adapters.media_files import MediaFiles
@@ -42,6 +46,8 @@ from ytmp3studio.persistence.repositories import (
 logger = logging.getLogger("ytmp3studio.mobile_server")
 DEFAULT_ORIGIN = "https://gerardferri.github.io"
 MAX_BODY_BYTES = 64 * 1024
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PWA_DIRECTORY = PROJECT_ROOT / "prototype"
 
 
 class MobileBackend:
@@ -99,10 +105,15 @@ class MobileApiServer(ThreadingHTTPServer):
         backend: MobileBackend,
         token: str,
         allowed_origins: set[str],
+        *,
+        static_dir: Path | None = None,
+        allow_local_web_without_token: bool = False,
     ) -> None:
         self.backend = backend
         self.token = token
         self.allowed_origins = {origin.rstrip("/") for origin in allowed_origins}
+        self.static_dir = static_dir.resolve() if static_dir else None
+        self.allow_local_web_without_token = allow_local_web_without_token
         super().__init__(address, MobileRequestHandler)
 
     def handle_error(self, request: Any, client_address: tuple[str, int]) -> None:
@@ -130,9 +141,11 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        parsed = urlsplit(self.path)
+        if not parsed.path.startswith("/api/") and self._send_static(parsed.path):
+            return
         if not self._authorize():
             return
-        parsed = urlsplit(self.path)
         try:
             if parsed.path == "/api/health":
                 self._json(HTTPStatus.OK, {"ok": True, "name": "YT-MP3 Studio PC"})
@@ -189,6 +202,8 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         if not self._origin_allowed():
             self._json_error(HTTPStatus.FORBIDDEN, "ORIGIN_DENIED", "Origen no permitido.")
             return False
+        if self._is_local_web_request():
+            return True
         header = self.headers.get("Authorization", "")
         supplied = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
         if not supplied or not hmac.compare_digest(supplied, self.server.token):
@@ -196,9 +211,23 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _is_local_web_request(self) -> bool:
+        """Allow the locally served browser UI, never a remote web origin."""
+        if not self.server.allow_local_web_without_token:
+            return False
+        host = self.headers.get("Host", "").lower()
+        expected_hosts = {
+            f"127.0.0.1:{self.server.server_port}",
+            f"localhost:{self.server.server_port}",
+        }
+        if host not in expected_hosts:
+            return False
+        origin = self.headers.get("Origin", "").rstrip("/")
+        return not origin or origin in {f"http://{value}" for value in expected_hosts}
+
     def _origin_allowed(self) -> bool:
         origin = self.headers.get("Origin")
-        if origin is None:
+        if not origin:
             return True
         normalized = origin.rstrip("/")
         if normalized in self.server.allowed_origins:
@@ -212,6 +241,31 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Cache-Control", "no-store")
+
+    def _send_static(self, request_path: str) -> bool:
+        """Serve only files in the shipped PWA directory, without traversal."""
+        root = self.server.static_dir
+        if root is None:
+            return False
+        relative = "index.html" if request_path in ("", "/") else request_path.lstrip("/")
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return True
+        if not candidate.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return True
+        data = candidate.read_bytes()
+        content_type, _ = mimetypes.guess_type(candidate.name)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+        return True
 
     def _read_json(self) -> dict[str, Any]:
         try:
@@ -336,18 +390,41 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", help="Clave fija; si se omite se genera y guarda una segura")
     parser.add_argument("--allow-origin", action="append", default=[], help="Origen HTTPS adicional permitido")
     parser.add_argument("--database", type=Path, help="Base de datos alternativa para pruebas")
+    parser.add_argument("--web", action="store_true", help="Sirve la aplicaciÃ³n web local para usarla desde el PC")
+    parser.add_argument("--open-browser", action="store_true", help="Abre la aplicaciÃ³n web en el navegador (requiere --web)")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.open_browser and not args.web:
+        raise SystemExit("--open-browser requiere --web")
+    if args.web and args.host not in {"127.0.0.1", "localhost", "::1"}:
+        raise SystemExit("--web solo se puede usar en una interfaz local (127.0.0.1, localhost o ::1)")
+    if args.web and not PWA_DIRECTORY.is_dir():
+        raise SystemExit(f"No se ha encontrado la PWA en {PWA_DIRECTORY}")
     configure_logging()
     token = load_or_create_token(args.token)
     backend = MobileBackend(args.database)
-    server = MobileApiServer((args.host, args.port), backend, token, {DEFAULT_ORIGIN, *args.allow_origin})
-    print("YT-MP3 Studio para iPhone")
-    print(f"Servidor local: http://{args.host}:{args.port}")
-    print(f"Clave: {token}")
+    server = MobileApiServer(
+        (args.host, args.port),
+        backend,
+        token,
+        {DEFAULT_ORIGIN, *args.allow_origin},
+        static_dir=PWA_DIRECTORY if args.web else None,
+        allow_local_web_without_token=args.web,
+    )
+    if args.web:
+        url = f"http://{args.host}:{server.server_port}"
+        print("YT-MP3 Studio web para PC")
+        print(f"AplicaciÃ³n web local: {url}")
+        print("Solo acepta conexiones de este PC; no abre puertos en el router.")
+        if args.open_browser:
+            Timer(0.2, lambda: webbrowser.open(url)).start()
+    else:
+        print("YT-MP3 Studio para iPhone")
+        print(f"Servidor local: http://{args.host}:{server.server_port}")
+        print(f"Clave: {token}")
     print("Mant\u00e9n esta ventana abierta. Pulsa Ctrl+C para detener el servidor.")
 
     try:

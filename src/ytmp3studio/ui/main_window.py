@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
 
@@ -17,51 +17,69 @@ class MainWindow(QMainWindow):
     def __init__(self, facade: object, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.facade = facade
-        self.setWindowTitle("YT-MP3 Studio")
-        self.resize(1240, 800)
+        self.setObjectName("mainWindow")
+        self.setWindowTitle("YT-MP3 Studio — Tu música sin conexión")
+        self.resize(1280, 820)
         self.setMinimumSize(900, 620)
 
         brand_mark = QLabel("●")
+        brand_mark.setObjectName("brandMark")
+        brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_mark.setFixedSize(36, 36)
         brand_mark.setProperty("accent", True)
-        brand_mark.setStyleSheet("font-size: 28px; font-weight: 900;")
-        brand_name = QLabel("YT-MP3")
-        brand_name.setStyleSheet("font-size: 18px; font-weight: 800;")
+        brand_name = QLabel("YT-MP3 Studio")
+        brand_name.setObjectName("brandName")
         brand = QHBoxLayout()
-        brand.setSpacing(9)
+        brand.setSpacing(10)
         brand.addWidget(brand_mark)
         brand.addWidget(brand_name)
         brand.addStretch()
         brand_caption = QLabel("TU MÚSICA, SIN CONEXIÓN")
         brand_caption.setProperty("eyebrow", True)
 
+        navigation_label = QLabel("NAVEGACIÓN")
+        navigation_label.setObjectName("sidebarSectionLabel")
+
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.navigation.setAccessibleName("Navegación principal")
-        for label in ("⌕   Buscar", "↓   Cola", "♫   Playlists", "♫   Biblioteca", "⚙   Configuración"):
-            self.navigation.addItem(QListWidgetItem(label))
+        navigation_entries = (
+            ("⌕   Buscar", "Busca música o pega un enlace", "Ctrl+1"),
+            ("↓   Cola", "Consulta tus descargas", "Ctrl+2"),
+            ("♫   Playlists", "Importa y sincroniza playlists", "Ctrl+3"),
+            ("▦   Biblioteca", "Escucha tu música descargada", "Ctrl+4"),
+            ("⚙   Configuración", "Ajusta carpeta, calidad y tema", "Ctrl+5"),
+        )
+        for label, description, shortcut in navigation_entries:
+            item = QListWidgetItem(label)
+            item.setSizeHint(QSize(0, 46))
+            item.setToolTip(f"{description}  ·  {shortcut}")
+            self.navigation.addItem(item)
 
         profile = QFrame()
         profile.setObjectName("profileCard")
         profile_layout = QVBoxLayout(profile)
         profile_layout.setContentsMargins(12, 10, 12, 10)
         profile_layout.setSpacing(2)
-        profile_title = QLabel("Modo local")
-        profile_title.setStyleSheet("font-weight: 700;")
-        profile_detail = QLabel("Privado · sin anuncios")
+        profile_title = QLabel("●  Modo local")
+        profile_title.setObjectName("localStatus")
+        profile_detail = QLabel("Privado y sin anuncios")
         profile_detail.setProperty("muted", True)
         profile_layout.addWidget(profile_title)
         profile_layout.addWidget(profile_detail)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(224)
+        sidebar.setFixedWidth(236)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(18, 24, 18, 18)
+        sidebar_layout.setContentsMargins(16, 22, 16, 16)
         sidebar_layout.setSpacing(8)
         sidebar_layout.addLayout(brand)
         sidebar_layout.addWidget(brand_caption)
         sidebar_layout.addSpacing(24)
+        sidebar_layout.addWidget(navigation_label)
+        sidebar_layout.addSpacing(2)
         sidebar_layout.addWidget(self.navigation, 1)
         sidebar_layout.addWidget(profile)
 
@@ -79,8 +97,8 @@ class MainWindow(QMainWindow):
         self.legal.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         content = QVBoxLayout()
-        content.setContentsMargins(26, 22, 26, 12)
-        content.setSpacing(12)
+        content.setContentsMargins(30, 26, 30, 14)
+        content.setSpacing(14)
         content.addWidget(self.pages, 1)
         content.addWidget(self.player)
         content.addWidget(self.legal)

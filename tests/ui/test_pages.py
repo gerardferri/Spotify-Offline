@@ -208,6 +208,21 @@ def test_settings_google_drive_uses_a_dedicated_music_folder(qapp, tmp_path, mon
     assert page.saved.text() == "Google Drive seleccionado. Pulsa Guardar configuración."
 
 
+def test_settings_google_drive_does_not_duplicate_dedicated_folder(qapp, tmp_path, monkeypatch):
+    facade = FakeFacade()
+    page = SettingsPage(facade)
+    dedicated = tmp_path / "YT-MP3 Studio"
+    dedicated.mkdir()
+    monkeypatch.setattr(
+        "ytmp3studio.ui.pages.settings_page.QFileDialog.getExistingDirectory",
+        lambda *_args: str(dedicated),
+    )
+
+    page._choose_google_drive()
+
+    assert page.download_dir.text() == str(dedicated)
+
+
 def test_library_paginates_and_reveals_selected_track(qapp, tmp_path):
     facade = FakeFacade()
     page = LibraryPage(facade)

@@ -13,6 +13,7 @@ from ytmp3studio.mobile_server import MobileApiServer, _parse_range, load_or_cre
 
 TOKEN = "a-secure-personal-token-with-24-chars"
 ORIGIN = "https://gerardferri.github.io"
+PWA_DIRECTORY = Path(__file__).resolve().parents[2] / "prototype"
 
 
 class FakeBackend:
@@ -134,3 +135,47 @@ def test_parse_range(header, size, expected):
 def test_explicit_token_must_be_long_enough():
     with pytest.raises(ValueError):
         load_or_create_token("short")
+
+
+def test_local_web_serves_pwa_and_allows_only_its_same_origin_without_token(tmp_path):
+    audio_path = tmp_path / "test.mp3"
+    audio_path.write_bytes(b"0123456789")
+    server = MobileApiServer(
+        ("127.0.0.1", 0),
+        FakeBackend(audio_path),
+        TOKEN,
+        {ORIGIN},
+        static_dir=PWA_DIRECTORY,
+        allow_local_web_without_token=True,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        local_origin = f"http://127.0.0.1:{server.server_port}"
+        page, html = request(server.server_address, "GET", "/", token=None, headers={"Origin": local_origin})
+        assert page.status == 200
+        assert page.getheader("Content-Type") == "text/html"
+        assert b"YT-MP3 Studio" in html
+
+        health, payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Origin": "", "Host": f"127.0.0.1:{server.server_port}"},
+        )
+        assert health.status == 200
+        assert json.loads(payload)["ok"] is True
+
+        remote, _payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Host": "desktop.example.test"},
+        )
+        assert remote.status == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
