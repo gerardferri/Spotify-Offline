@@ -21,7 +21,22 @@
       <input id="fileInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg" multiple hidden>
     </header>
 
-    <section class="page is-visible" id="page-library">
+    <section class="page is-visible" id="page-search">
+      <div class="hero"><span class="eyebrow">DESCARGA EN TU PC</span><h1>Buscar música</h1><p>El PC busca y convierte el audio; después puedes guardarlo en este iPhone.</p></div>
+      <div class="server-banner" id="serverBanner"><span class="status-dot"></span><p><strong id="serverStatus">Servidor sin configurar</strong><small id="serverHint">Introduce la dirección y la clave en Ajustes.</small></p><button class="secondary" id="openServerSettings">Configurar</button></div>
+      <form class="remote-search" id="remoteSearchForm"><label class="search"><span>⌕</span><input id="remoteQuery" type="search" placeholder="Canción, artista o URL de YouTube" required></label><button class="primary" type="submit">Buscar</button></form>
+      <div class="search-results" id="searchResults"></div>
+      <section class="empty-state compact" id="searchEmpty"><div>⌕</div><h2>Busca desde el iPhone</h2><p>Tu petición viajará cifrada al PC. Solo descarga contenido propio o para el que tengas permiso.</p></section>
+    </section>
+
+    <section class="page" id="page-downloads">
+      <div class="hero"><span class="eyebrow">TRABAJO DEL PC</span><h1>Descargas</h1><p>Consulta el progreso y copia los MP3 terminados a la biblioteca del iPhone.</p></div>
+      <button class="secondary refresh-jobs" id="refreshJobs">Actualizar</button>
+      <div class="job-list" id="jobList"></div>
+      <section class="empty-state compact" id="jobsEmpty"><div>↓</div><h2>No hay descargas</h2><p>Busca una canción y envíala al PC para verla aquí.</p></section>
+    </section>
+
+    <section class="page" id="page-library">
       <div class="hero"><span class="eyebrow">TU MÚSICA, EN ESTE IPHONE</span><h1>Biblioteca offline</h1><p id="librarySummary">Importa tus archivos de audio para empezar.</p></div>
       <div class="notice" id="storageNotice"><span>ⓘ</span><p>La música se guarda solo en este dispositivo. Safari puede borrar estos datos al limpiar el sitio; crea copias de seguridad.</p></div>
       <div class="toolbar"><label class="search"><span>⌕</span><input id="libraryFilter" type="search" placeholder="Buscar en tu música"></label><button class="pill" id="sortButton">Recientes</button></div>
@@ -38,14 +53,17 @@
     </section>
 
     <section class="page" id="page-settings">
-      <div class="hero"><span class="eyebrow">DATOS DEL DISPOSITIVO</span><h1>Ajustes</h1><p>La biblioteca no se sincroniza con ningún servidor.</p></div>
+      <div class="hero"><span class="eyebrow">PC + IPHONE</span><h1>Ajustes</h1><p>Conecta de forma privada con el servidor de YT-MP3 Studio de tu PC.</p></div>
+      <section class="settings-card"><h2>Servidor personal</h2><label class="field"><span>Dirección HTTPS de Tailscale</span><input id="serverUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://tu-pc.tu-red.ts.net"></label><label class="field"><span>Clave mostrada por el PC</span><input id="serverToken" type="password" autocomplete="off" placeholder="Clave personal del servidor"></label><div class="setting-actions"><button class="primary" id="saveServer">Guardar y probar</button><button class="secondary" id="toggleToken">Mostrar clave</button></div><p class="connection-result" id="connectionResult">Todavía no se ha probado la conexión.</p><small>La clave se guarda únicamente en este iPhone. No abras el puerto 8766 en el router.</small></section>
       <section class="settings-card"><h2>Almacenamiento local</h2><p id="storageUsage">Calculando espacio disponible…</p><button class="secondary" id="requestPersistence">Proteger datos en Safari</button><small>Safari decide si concede almacenamiento persistente. Aun así, conserva una copia de seguridad.</small></section>
       <section class="settings-card"><h2>Información</h2><p>YT-MP3 Studio PWA guarda únicamente los audios que importas y sus metadatos dentro del navegador.</p><button class="danger" id="clearLibrary">Borrar biblioteca de este iPhone</button></section>
     </section>
   </main>
 
   <nav class="bottom-nav" aria-label="Navegación principal">
-    <button class="nav-item is-active" data-page="library"><span>♫</span>Biblioteca</button>
+    <button class="nav-item is-active" data-page="search"><span>⌕</span>Buscar</button>
+    <button class="nav-item" data-page="downloads"><span>↓</span>Descargas</button>
+    <button class="nav-item" data-page="library"><span>♫</span>Biblioteca</button>
     <button class="nav-item" data-page="playlists"><span>≡</span>Playlists</button>
     <button class="nav-item" data-page="settings"><span>⚙</span>Ajustes</button>
   </nav>

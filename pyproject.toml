@@ -24,6 +24,7 @@ build = [
 
 [project.scripts]
 yt-mp3-studio = "ytmp3studio.app:main"
+ytmp3-mobile-server = "ytmp3studio.mobile_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ytmp3studio"]

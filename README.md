@@ -39,26 +39,43 @@ Los datos no se guardan dentro de la instalación:
 
 Desinstalar el programa conserva la biblioteca, la base de datos, los logs y los MP3 del usuario.
 
-## Biblioteca offline para iPhone (PWA)
+## iPhone: PWA y servidor personal del PC
 
-La carpeta `prototype/` contiene una aplicaciÃ³n web instalable e independiente de la aplicaciÃ³n de Windows. Es una biblioteca personal: importa archivos de audio desde **Archivos**, guarda una copia dentro del almacenamiento local de Safari y permite reproducirlos sin conexiÃ³n. No busca ni descarga contenido de Internet.
+La carpeta `prototype/` contiene una PWA instalable desde Safari. Puede importar audio desde **Archivos** y también usar el PC para buscar, descargar y convertir contenido autorizado. El PC realiza el trabajo con `yt-dlp` y `ffmpeg`; el iPhone solo controla la cola y copia el MP3 terminado a su biblioteca local.
 
-Para usarla en un iPhone:
+Para instalar la PWA:
 
-1. Publica el repositorio en GitHub y, en **Settings > Pages**, selecciona **GitHub Actions** como fuente. El flujo `.github/workflows/deploy-pwa.yml` publicarÃ¡ `prototype/` en cada cambio de `main`.
-2. Abre la URL de GitHub Pages con Safari en el iPhone.
-3. Usa **Compartir > AÃ±adir a pantalla de inicio**. La primera carga necesita Internet; despuÃ©s la interfaz funciona sin conexiÃ³n.
-4. Importa tus MP3 u otros audios desde el botÃ³n `+`. Haz una copia desde **Exportar copia** con regularidad. La copia contiene playlists y metadatos, no los archivos de audio; vuelve a importar los audios antes de restaurarla para asociarlos por huella.
+1. En GitHub, selecciona **Settings > Pages > GitHub Actions**. El flujo `.github/workflows/deploy-pwa.yml` publica `prototype/` en cada cambio de `main`.
+2. Abre `https://gerardferri.github.io/Spotify-Offline/` con Safari.
+3. Pulsa **Compartir > Añadir a pantalla de inicio**.
 
-Los audios y playlists no se suben a GitHub Pages ni a ningÃºn servidor. Safari controla su cuota y puede borrar los datos al limpiar el sitio, por lo que el respaldo manual es importante.
+### Conectar el iPhone con el PC
 
-Para probarla localmente:
+Se usa Tailscale para crear una conexión HTTPS privada, sin abrir puertos del router:
+
+1. Instala Tailscale en Windows y en el iPhone e inicia sesión con la misma cuenta en ambos.
+2. En Windows, abre PowerShell en la carpeta del proyecto y ejecuta:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-mobile-server.ps1
+   ```
+
+3. La primera vez, Tailscale puede mostrar un enlace para habilitar HTTPS. Ábrelo y autoriza **Tailscale Serve**. El comando mostrará una dirección parecida a `https://nombre-pc.tailnet.ts.net`.
+4. Mantén la ventana de PowerShell abierta. Copia la dirección HTTPS y la clave que aparece al arrancar.
+5. En la PWA, entra en **Ajustes > Servidor del PC**, pega ambos valores, guarda y pulsa **Probar conexión**.
+6. Busca una canción, envíala al PC y, cuando termine, pulsa **Guardar en iPhone**.
+
+El PC debe estar encendido, conectado a Internet y con el servidor abierto durante la búsqueda y descarga. Tailscale debe estar conectado en ambos dispositivos. No expongas el puerto `8766` en el router ni uses Tailscale Funnel: la API está diseñada para acceso privado y además exige una clave aleatoria.
+
+Los MP3 guardados en la PWA viven en IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
+
+Para probar solo la interfaz en el PC:
 
 ```powershell
 python -m http.server 8765 --directory prototype
 ```
 
-Abre `http://localhost:8765`. El service worker solo se registra en un origen seguro o en `localhost`; para instalarla en el iPhone se necesita la URL HTTPS de GitHub Pages.
+Abre `http://localhost:8765`. El service worker solo se registra en un origen seguro o en `localhost`.
 
 ## Desarrollo
 
