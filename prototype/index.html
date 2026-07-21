@@ -70,7 +70,12 @@
   </nav>
 
   <footer class="player" id="player" hidden>
-    <button class="art-button" id="playerPlay" aria-label="Reproducir">▶</button><div class="now-playing"><strong id="playerTitle"></strong><small id="playerArtist"></small></div><button class="icon-button small" id="playerNext" aria-label="Siguiente">›</button>
+    <div class="now-playing"><strong id="playerTitle"></strong><small id="playerArtist"></small></div>
+    <div class="player-controls" aria-label="Controles de reproducción">
+      <button class="player-control" id="playerPrevious" aria-label="Canción anterior">↶</button>
+      <button class="art-button" id="playerPlay" aria-label="Reproducir">▶</button>
+      <button class="player-control" id="playerNext" aria-label="Siguiente canción">↷</button>
+    </div>
     <div class="progress-row"><span id="elapsed">0:00</span><input id="progress" type="range" min="0" max="0" value="0" aria-label="Progreso"><span id="duration">0:00</span></div>
   </footer>
   <audio id="audio" preload="metadata"></audio>
