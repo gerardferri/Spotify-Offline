@@ -1,0 +1,153 @@
+- generic [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary "Navegación principal" [ref=f2e3]:
+      - link "YT-MP3 Studio" [ref=f2e4] [cursor=pointer]:
+        - /url: "#search"
+        - generic [ref=f2e9]:
+          - strong [ref=f2e10]: YT-MP3
+          - generic [ref=f2e11]: STUDIO
+      - navigation [ref=f2e12]:
+        - button "Buscar ⌘1" [ref=f2e13] [cursor=pointer]:
+          - generic [ref=f2e16]: Buscar
+          - generic [ref=f2e17]: ⌘1
+        - button "Cola 3" [ref=f2e18] [cursor=pointer]:
+          - generic [ref=f2e21]: Cola
+          - generic [ref=f2e22]: "3"
+        - button "Biblioteca ⌘3" [active] [ref=f2e23] [cursor=pointer]:
+          - generic [ref=f2e26]: Biblioteca
+          - generic [ref=f2e27]: ⌘3
+      - generic [ref=f2e28]:
+        - paragraph [ref=f2e29]: Tu música
+        - button "♥ Favoritos" [ref=f2e30] [cursor=pointer]:
+          - generic [ref=f2e31]: ♥
+          - text: Favoritos
+        - button "↓ Descargas" [ref=f2e32] [cursor=pointer]:
+          - generic [ref=f2e33]: ↓
+          - text: Descargas
+        - button "＋ Nueva colección" [ref=f2e34] [cursor=pointer]:
+          - generic [ref=f2e35]: ＋
+          - text: Nueva colección
+      - button "GF Gerard 320 kbps · Offline" [ref=f2e36] [cursor=pointer]:
+        - generic [ref=f2e37]: GF
+        - generic [ref=f2e38]:
+          - strong [ref=f2e39]: Gerard
+          - generic [ref=f2e40]: 320 kbps · Offline
+    - main [ref=f2e43]:
+      - generic [ref=f2e44]:
+        - generic [ref=f2e45]:
+          - button "Atrás" [ref=f2e46] [cursor=pointer]
+          - button "Adelante" [ref=f2e49] [cursor=pointer]
+        - generic [ref=f2e52]:
+          - searchbox "Ctrl K" [ref=f2e55]
+          - generic [ref=f2e56]: Ctrl K
+        - generic [ref=f2e57]:
+          - generic [ref=f2e58]: Sin conexión
+          - button "Notificaciones" [ref=f2e60] [cursor=pointer]
+      - generic [ref=f2e282]:
+        - generic [ref=f2e283]:
+          - generic [ref=f2e284]:
+            - text: COLECCIÓN LOCAL
+            - heading "Biblioteca" [level=1] [ref=f2e285]
+            - paragraph [ref=f2e286]: 128 pistas disponibles sin conexión.
+          - generic [ref=f2e287]:
+            - button "Canciones" [ref=f2e288] [cursor=pointer]
+            - button "Álbumes" [ref=f2e289] [cursor=pointer]
+            - button "Artistas" [ref=f2e290] [cursor=pointer]
+        - generic [ref=f2e291]:
+          - textbox [ref=f2e295]:
+            - /placeholder: Filtrar biblioteca
+          - button "Filtros" [ref=f2e296] [cursor=pointer]
+          - button "Recientes" [ref=f2e299] [cursor=pointer]
+        - generic [ref=f2e302]:
+          - generic [ref=f2e303]:
+            - generic [ref=f2e304]: "#"
+            - generic [ref=f2e305]: Título
+            - generic [ref=f2e306]: Álbum
+            - generic [ref=f2e307]: Calidad
+          - button "01 Afterglow Neon Coast Midnight Drive 320 kbps 4:12 •••" [ref=f2e311] [cursor=pointer]:
+            - generic [ref=f2e312]: "01"
+            - generic [ref=f2e315]:
+              - strong [ref=f2e316]: Afterglow
+              - generic [ref=f2e317]: Neon Coast
+            - generic [ref=f2e318]: Midnight Drive
+            - generic [ref=f2e319]:
+              - emphasis [ref=f2e320]: "320"
+              - text: kbps
+            - generic [ref=f2e321]: 4:12
+            - generic [ref=f2e322]: •••
+          - button "02 Quiet Architecture Ambient Works Deep Focus 256 kbps 5:07 •••" [ref=f2e323] [cursor=pointer]:
+            - generic [ref=f2e324]: "02"
+            - generic [ref=f2e327]:
+              - strong [ref=f2e328]: Quiet Architecture
+              - generic [ref=f2e329]: Ambient Works
+            - generic [ref=f2e330]: Deep Focus
+            - generic [ref=f2e331]:
+              - emphasis [ref=f2e332]: "256"
+              - text: kbps
+            - generic [ref=f2e333]: 5:07
+            - generic [ref=f2e334]: •••
+          - button "03 Brisa del Sur Mar Abierto Mediterráneo 320 kbps 3:38 •••" [ref=f2e335] [cursor=pointer]:
+            - generic [ref=f2e336]: "03"
+            - generic [ref=f2e339]:
+              - strong [ref=f2e340]: Brisa del Sur
+              - generic [ref=f2e341]: Mar Abierto
+            - generic [ref=f2e342]: Mediterráneo
+            - generic [ref=f2e343]:
+              - emphasis [ref=f2e344]: "320"
+              - text: kbps
+            - generic [ref=f2e345]: 3:38
+            - generic [ref=f2e346]: •••
+          - button "04 First Light Acoustic Radio Slow Mornings 192 kbps 2:56 •••" [ref=f2e347] [cursor=pointer]:
+            - generic [ref=f2e348]: "04"
+            - generic [ref=f2e351]:
+              - strong [ref=f2e352]: First Light
+              - generic [ref=f2e353]: Acoustic Radio
+            - generic [ref=f2e354]: Slow Mornings
+            - generic [ref=f2e355]:
+              - emphasis [ref=f2e356]: "192"
+              - text: kbps
+            - generic [ref=f2e357]: 2:56
+            - generic [ref=f2e358]: •••
+          - button "05 Glass City Neon Coast Midnight Drive 320 kbps 4:44 •••" [ref=f2e359] [cursor=pointer]:
+            - generic [ref=f2e360]: "05"
+            - generic [ref=f2e363]:
+              - strong [ref=f2e364]: Glass City
+              - generic [ref=f2e365]: Neon Coast
+            - generic [ref=f2e366]: Midnight Drive
+            - generic [ref=f2e367]:
+              - emphasis [ref=f2e368]: "320"
+              - text: kbps
+            - generic [ref=f2e369]: 4:44
+            - generic [ref=f2e370]: •••
+        - generic [ref=f2e371]:
+          - generic [ref=f2e372]: Mostrando 1–5 de 128 pistas
+          - generic [ref=f2e373]:
+            - button "Anterior" [disabled] [ref=f2e374]
+            - button "Siguiente" [ref=f2e375] [cursor=pointer]
+    - contentinfo [ref=f2e160]:
+      - generic [ref=f2e161]:
+        - generic [ref=f2e163]:
+          - strong [ref=f2e164]: Afterglow
+          - generic [ref=f2e165]: Neon Coast
+        - button "Guardar" [ref=f2e166] [cursor=pointer]: ♡
+      - generic [ref=f2e167]:
+        - generic [ref=f2e168]:
+          - button [ref=f2e169] [cursor=pointer]
+          - button [ref=f2e172] [cursor=pointer]
+          - button [ref=f2e175] [cursor=pointer]
+          - button [ref=f2e178] [cursor=pointer]
+          - button [ref=f2e181] [cursor=pointer]
+        - generic [ref=f2e184]:
+          - generic [ref=f2e185]: 1:42
+          - button [ref=f2e186] [cursor=pointer]
+          - generic [ref=f2e188]: 4:12
+      - generic [ref=f2e189]:
+        - button [ref=f2e190] [cursor=pointer]
+        - button [ref=f2e193] [cursor=pointer]
+        - button [ref=f2e196] [cursor=pointer]
+        - button [ref=f2e198] [cursor=pointer]
+  - generic:
+    - generic: ✓
+    - paragraph:
+      - strong: Cambios guardados
+      - generic: Tu configuración se ha actualizado.

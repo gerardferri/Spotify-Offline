@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yt-mp3-studio"
+version = "0.1.0"
+description = "Aplicación de escritorio para buscar y guardar audio autorizado de YouTube"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.7,<7",
+  "yt-dlp>=2025.1.15",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-qt>=4.4",
+]
+build = [
+  "pyinstaller>=6.11,<7",
+]
+
+[project.scripts]
+yt-mp3-studio = "ytmp3studio.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ytmp3studio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+markers = ["external: pruebas que acceden a servicios de red reales"]

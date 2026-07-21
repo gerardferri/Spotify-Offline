@@ -1,0 +1,117 @@
+- generic [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary "Navegación principal" [ref=f2e3]:
+      - link "YT-MP3 Studio" [ref=f2e4] [cursor=pointer]:
+        - /url: "#search"
+        - generic [ref=f2e9]:
+          - strong [ref=f2e10]: YT-MP3
+          - generic [ref=f2e11]: STUDIO
+      - navigation [ref=f2e12]:
+        - button "Buscar ⌘1" [ref=f2e13] [cursor=pointer]:
+          - generic [ref=f2e16]: Buscar
+          - generic [ref=f2e17]: ⌘1
+        - button "Cola 3" [ref=f2e18] [cursor=pointer]:
+          - generic [ref=f2e21]: Cola
+          - generic [ref=f2e22]: "3"
+        - button "Biblioteca ⌘3" [ref=f2e23] [cursor=pointer]:
+          - generic [ref=f2e26]: Biblioteca
+          - generic [ref=f2e27]: ⌘3
+      - generic [ref=f2e28]:
+        - paragraph [ref=f2e29]: Tu música
+        - button "♥ Favoritos" [ref=f2e30] [cursor=pointer]:
+          - generic [ref=f2e31]: ♥
+          - text: Favoritos
+        - button "↓ Descargas" [ref=f2e32] [cursor=pointer]:
+          - generic [ref=f2e33]: ↓
+          - text: Descargas
+        - button "＋ Nueva colección" [ref=f2e34] [cursor=pointer]:
+          - generic [ref=f2e35]: ＋
+          - text: Nueva colección
+      - button "GF Gerard 320 kbps · Offline" [ref=f2e36] [cursor=pointer]:
+        - generic [ref=f2e37]: GF
+        - generic [ref=f2e38]:
+          - strong [ref=f2e39]: Gerard
+          - generic [ref=f2e40]: 320 kbps · Offline
+    - main [ref=f2e43]:
+      - generic [ref=f2e44]:
+        - generic [ref=f2e45]:
+          - button "Atrás" [ref=f2e46] [cursor=pointer]
+          - button "Adelante" [ref=f2e49] [cursor=pointer]
+        - generic [ref=f2e52]:
+          - searchbox "Ctrl K" [ref=f2e55]
+          - generic [ref=f2e56]: Ctrl K
+        - generic [ref=f2e57]:
+          - generic [ref=f2e58]: Sin conexión
+          - button "Notificaciones" [ref=f2e60] [cursor=pointer]
+      - generic [ref=f2e201]:
+        - generic [ref=f2e202]:
+          - generic [ref=f2e203]:
+            - text: GESTIÓN DE DESCARGAS
+            - heading "Cola" [level=1] [ref=f2e204]
+            - paragraph [ref=f2e205]: Tres elementos en curso; dos se descargarán a continuación.
+          - button "Reanudar todo" [active] [ref=f2e279] [cursor=pointer]
+        - generic [ref=f2e209]:
+          - paragraph [ref=f2e214]:
+            - strong [ref=f2e215]: "3"
+            - generic [ref=f2e216]: En curso
+          - paragraph [ref=f2e221]:
+            - strong [ref=f2e222]: 08:42
+            - generic [ref=f2e223]: Tiempo restante
+          - paragraph [ref=f2e228]:
+            - strong [ref=f2e229]: 246 MB
+            - generic [ref=f2e230]: Descargado hoy
+        - generic [ref=f2e231]:
+          - article [ref=f2e232]:
+            - generic [ref=f2e234]:
+              - generic [ref=f2e235]:
+                - strong [ref=f2e236]: Nightcall — Synthwave Mix
+                - generic [ref=f2e237]: Pausada
+              - paragraph [ref=f2e238]: Neon Coast · MP3 320 kbps
+              - generic [ref=f2e241]: 68% · 7.4 MB/s · quedan 01:18
+            - button [ref=f2e242] [cursor=pointer]
+            - button [ref=f2e245] [cursor=pointer]
+          - article [ref=f2e248]:
+            - generic [ref=f2e250]:
+              - generic [ref=f2e251]:
+                - strong [ref=f2e252]: Soft Acoustic Morning
+                - generic [ref=f2e253]: Pausada
+              - paragraph [ref=f2e254]: Acoustic Radio · MP3 256 kbps
+              - generic [ref=f2e257]: Procesando audio · quedan 00:12
+            - button [ref=f2e258] [cursor=pointer]
+            - button [ref=f2e261] [cursor=pointer]
+          - article [ref=f2e264]:
+            - generic [ref=f2e266]:
+              - generic [ref=f2e267]:
+                - strong [ref=f2e268]: Brisa del Sur
+                - generic [ref=f2e269]: En espera
+              - paragraph [ref=f2e270]: Mar Abierto · MP3 320 kbps
+              - generic [ref=f2e272]: Se iniciará automáticamente
+            - button [ref=f2e273] [cursor=pointer]
+            - button [ref=f2e276] [cursor=pointer]
+    - contentinfo [ref=f2e160]:
+      - generic [ref=f2e161]:
+        - generic [ref=f2e163]:
+          - strong [ref=f2e164]: Afterglow
+          - generic [ref=f2e165]: Neon Coast
+        - button "Guardar" [ref=f2e166] [cursor=pointer]: ♡
+      - generic [ref=f2e167]:
+        - generic [ref=f2e168]:
+          - button [ref=f2e169] [cursor=pointer]
+          - button [ref=f2e172] [cursor=pointer]
+          - button [ref=f2e175] [cursor=pointer]
+          - button [ref=f2e178] [cursor=pointer]
+          - button [ref=f2e181] [cursor=pointer]
+        - generic [ref=f2e184]:
+          - generic [ref=f2e185]: 1:42
+          - button [ref=f2e186] [cursor=pointer]
+          - generic [ref=f2e188]: 4:12
+      - generic [ref=f2e189]:
+        - button [ref=f2e190] [cursor=pointer]
+        - button [ref=f2e193] [cursor=pointer]
+        - button [ref=f2e196] [cursor=pointer]
+        - button [ref=f2e198] [cursor=pointer]
+  - generic:
+    - generic: ✓
+    - paragraph:
+      - strong: Cambios guardados
+      - generic: Tu configuración se ha actualizado.

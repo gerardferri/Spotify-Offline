@@ -1,0 +1,32 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: ♫
+        - generic [ref=e6]:
+          - strong [ref=e7]: YT-MP3
+          - generic [ref=e8]: STUDIO · OFFLINE
+      - button "Importar música" [ref=e9] [cursor=pointer]: ＋
+    - generic [ref=e39]:
+      - generic [ref=e40]:
+        - text: COLECCIONES PERSONALES
+        - heading "Playlists" [level=1] [ref=e41]
+        - paragraph [ref=e42]: Crea listas manuales con la música guardada en este iPhone.
+      - generic [ref=e43]:
+        - textbox "Nombre de la nueva playlist" [ref=e44]
+        - button "Crear" [ref=e45] [cursor=pointer]
+      - generic [ref=e46]:
+        - generic [ref=e47]: ≡
+        - heading "Aún no hay playlists" [level=2] [ref=e48]
+        - paragraph [ref=e49]: Crea una lista y añade canciones desde el menú de cada pista.
+  - navigation "Navegación principal" [ref=e31]:
+    - button "♫ Biblioteca" [ref=e32] [cursor=pointer]:
+      - generic [ref=e33]: ♫
+      - text: Biblioteca
+    - button "≡ Playlists" [active] [ref=e34] [cursor=pointer]:
+      - generic [ref=e35]: ≡
+      - text: Playlists
+    - button "⚙ Ajustes" [ref=e36] [cursor=pointer]:
+      - generic [ref=e37]: ⚙
+      - text: Ajustes
+  - status [ref=e38]

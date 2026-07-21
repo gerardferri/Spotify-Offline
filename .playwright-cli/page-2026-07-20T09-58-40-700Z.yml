@@ -1,0 +1,138 @@
+- generic [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary "Navegación principal" [ref=f2e3]:
+      - link "YT-MP3 Studio" [ref=f2e4] [cursor=pointer]:
+        - /url: "#search"
+        - generic [ref=f2e9]:
+          - strong [ref=f2e10]: YT-MP3
+          - generic [ref=f2e11]: STUDIO
+      - navigation [ref=f2e12]:
+        - button "Buscar ⌘1" [ref=f2e13] [cursor=pointer]:
+          - generic [ref=f2e16]: Buscar
+          - generic [ref=f2e17]: ⌘1
+        - button "Cola 3" [ref=f2e18] [cursor=pointer]:
+          - generic [ref=f2e21]: Cola
+          - generic [ref=f2e22]: "3"
+        - button "Biblioteca ⌘3" [ref=f2e23] [cursor=pointer]:
+          - generic [ref=f2e26]: Biblioteca
+          - generic [ref=f2e27]: ⌘3
+      - generic [ref=f2e28]:
+        - paragraph [ref=f2e29]: Tu música
+        - button "♥ Favoritos" [ref=f2e30] [cursor=pointer]:
+          - generic [ref=f2e31]: ♥
+          - text: Favoritos
+        - button "↓ Descargas" [ref=f2e32] [cursor=pointer]:
+          - generic [ref=f2e33]: ↓
+          - text: Descargas
+        - button "＋ Nueva colección" [ref=f2e34] [cursor=pointer]:
+          - generic [ref=f2e35]: ＋
+          - text: Nueva colección
+      - button "GF Gerard 320 kbps · Offline" [active] [ref=f2e36] [cursor=pointer]:
+        - generic [ref=f2e37]: GF
+        - generic [ref=f2e38]:
+          - strong [ref=f2e39]: Gerard
+          - generic [ref=f2e40]: 320 kbps · Offline
+    - main [ref=f2e43]:
+      - generic [ref=f2e44]:
+        - generic [ref=f2e45]:
+          - button "Atrás" [ref=f2e46] [cursor=pointer]
+          - button "Adelante" [ref=f2e49] [cursor=pointer]
+        - generic [ref=f2e52]:
+          - searchbox "Ctrl K" [ref=f2e55]
+          - generic [ref=f2e56]: Ctrl K
+        - generic [ref=f2e57]:
+          - generic [ref=f2e58]: Sin conexión
+          - button "Notificaciones" [ref=f2e60] [cursor=pointer]
+      - generic [ref=f2e376]:
+        - generic [ref=f2e377]:
+          - generic [ref=f2e378]:
+            - text: PREFERENCIAS
+            - heading "Configuración" [level=1] [ref=f2e379]
+            - paragraph [ref=f2e380]: Personaliza las descargas, el sonido y la apariencia.
+          - button "Guardar cambios" [ref=f2e381] [cursor=pointer]
+        - generic [ref=f2e382]:
+          - generic [ref=f2e383]:
+            - generic [ref=f2e388]:
+              - heading "Descargas" [level=2] [ref=f2e389]
+              - paragraph [ref=f2e390]: Calidad, destino y rendimiento
+            - generic [ref=f2e391]:
+              - generic [ref=f2e392]: Carpeta de descargas
+              - generic [ref=f2e393]:
+                - textbox "Carpeta de descargas Elegir…" [ref=f2e394]: C:\Usuarios\Gerard\Música\YT-MP3
+                - button "Elegir…" [ref=f2e395] [cursor=pointer]
+            - generic [ref=f2e396]:
+              - generic [ref=f2e397]:
+                - generic [ref=f2e398]: Calidad MP3
+                - combobox "Calidad MP3" [ref=f2e399]:
+                  - option "320 kbps — Máxima" [selected]
+                  - option "256 kbps"
+                  - option "192 kbps"
+              - generic [ref=f2e400]:
+                - generic [ref=f2e401]: Descargas simultáneas
+                - combobox "Descargas simultáneas" [ref=f2e402]:
+                  - option "3 descargas" [selected]
+                  - option "2 descargas"
+                  - option "1 descarga"
+          - generic [ref=f2e403]:
+            - generic [ref=f2e408]:
+              - heading "Apariencia" [level=2] [ref=f2e409]
+              - paragraph [ref=f2e410]: Interfaz y comportamiento visual
+            - generic [ref=f2e411]:
+              - button "Claro Luminoso y limpio" [ref=f2e412] [cursor=pointer]:
+                - generic [ref=f2e414]:
+                  - strong [ref=f2e415]: Claro
+                  - generic [ref=f2e416]: Luminoso y limpio
+              - button "Oscuro Ideal para la noche ✓" [ref=f2e417] [cursor=pointer]:
+                - generic [ref=f2e419]:
+                  - strong [ref=f2e420]: Oscuro
+                  - generic [ref=f2e421]: Ideal para la noche
+                - generic [ref=f2e422]: ✓
+              - button "Sistema Sigue tu dispositivo" [ref=f2e423] [cursor=pointer]:
+                - generic [ref=f2e425]:
+                  - strong [ref=f2e426]: Sistema
+                  - generic [ref=f2e427]: Sigue tu dispositivo
+          - generic [ref=f2e428]:
+            - generic [ref=f2e429]:
+              - generic [ref=f2e433]:
+                - heading "Herramientas" [level=2] [ref=f2e434]
+                - paragraph [ref=f2e435]: Dependencias necesarias para descargar y convertir audio
+              - button "Comprobar de nuevo" [ref=f2e436] [cursor=pointer]
+            - generic [ref=f2e437]:
+              - generic [ref=f2e438]: yt
+              - generic [ref=f2e439]:
+                - strong [ref=f2e440]: yt-dlp
+                - generic [ref=f2e441]: 2026.07.12
+              - emphasis [ref=f2e442]: ✓ Operativo
+            - generic [ref=f2e443]:
+              - generic [ref=f2e444]: ff
+              - generic [ref=f2e445]:
+                - strong [ref=f2e446]: FFmpeg
+                - generic [ref=f2e447]: 7.1.1
+              - emphasis [ref=f2e448]: ✓ Operativo
+    - contentinfo [ref=f2e160]:
+      - generic [ref=f2e161]:
+        - generic [ref=f2e163]:
+          - strong [ref=f2e164]: Afterglow
+          - generic [ref=f2e165]: Neon Coast
+        - button "Guardar" [ref=f2e166] [cursor=pointer]: ♡
+      - generic [ref=f2e167]:
+        - generic [ref=f2e168]:
+          - button [ref=f2e169] [cursor=pointer]
+          - button [ref=f2e172] [cursor=pointer]
+          - button [ref=f2e175] [cursor=pointer]
+          - button [ref=f2e178] [cursor=pointer]
+          - button [ref=f2e181] [cursor=pointer]
+        - generic [ref=f2e184]:
+          - generic [ref=f2e185]: 1:42
+          - button [ref=f2e186] [cursor=pointer]
+          - generic [ref=f2e188]: 4:12
+      - generic [ref=f2e189]:
+        - button [ref=f2e190] [cursor=pointer]
+        - button [ref=f2e193] [cursor=pointer]
+        - button [ref=f2e196] [cursor=pointer]
+        - button [ref=f2e198] [cursor=pointer]
+  - generic:
+    - generic: ✓
+    - paragraph:
+      - strong: Cambios guardados
+      - generic: Tu configuración se ha actualizado.

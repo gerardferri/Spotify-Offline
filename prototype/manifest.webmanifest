@@ -1,0 +1,11 @@
+{
+  "name": "YT-MP3 Studio · Biblioteca offline",
+  "short_name": "YT-MP3 Studio",
+  "description": "Biblioteca personal de audio guardada en este dispositivo.",
+  "lang": "es",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#08120d",
+  "theme_color": "#08120d",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

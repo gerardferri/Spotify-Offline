@@ -1,0 +1,42 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: ♫
+        - generic [ref=e6]:
+          - strong [ref=e7]: YT-MP3
+          - generic [ref=e8]: STUDIO · OFFLINE
+      - button "Importar música" [ref=e9] [cursor=pointer]: ＋
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - text: TU MÚSICA, EN ESTE IPHONE
+        - heading "Biblioteca offline" [level=1] [ref=e12]
+        - paragraph [ref=e13]: Importa tus archivos de audio para empezar.
+      - generic [ref=e14]:
+        - generic [ref=e15]: ⓘ
+        - paragraph [ref=e16]: La música se guarda solo en este dispositivo. Safari puede borrar estos datos al limpiar el sitio; crea copias de seguridad.
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: ⌕
+          - searchbox "⌕" [ref=e20]
+        - button "Recientes" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - button "Importar audio" [ref=e23] [cursor=pointer]
+        - button "Exportar copia" [ref=e24] [cursor=pointer]
+        - generic [ref=e25]: Restaurar copia
+      - generic [ref=e26]:
+        - generic [ref=e27]: ♫
+        - heading "Tu biblioteca está vacía" [level=2] [ref=e28]
+        - paragraph [ref=e29]: Selecciona MP3, M4A, AAC, WAV u OGG desde Archivos. Se copiarán para poder escucharlos sin conexión.
+        - button "Importar música" [ref=e30] [cursor=pointer]
+  - navigation "Navegación principal" [ref=e31]:
+    - button "♫ Biblioteca" [ref=e32] [cursor=pointer]:
+      - generic [ref=e33]: ♫
+      - text: Biblioteca
+    - button "≡ Playlists" [ref=e34] [cursor=pointer]:
+      - generic [ref=e35]: ≡
+      - text: Playlists
+    - button "⚙ Ajustes" [ref=e36] [cursor=pointer]:
+      - generic [ref=e37]: ⚙
+      - text: Ajustes
+  - status [ref=e38]

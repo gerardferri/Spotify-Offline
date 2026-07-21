@@ -1,0 +1,36 @@
+{
+  "runId": "ytmp3-visual-v1",
+  "fileKey": "NKHvzWmNqh3ZHisX8dMMms",
+  "fileUrl": "https://www.figma.com/design/NKHvzWmNqh3ZHisX8dMMms",
+  "phase": "phase1",
+  "step": "typography-styles",
+  "entities": {
+    "collections": {
+      "colorPrimitives": "VariableCollectionId:2:2",
+      "colorDark": "VariableCollectionId:2:3",
+      "colorLight": "VariableCollectionId:2:4",
+      "dimensions": "VariableCollectionId:2:5",
+      "typography": "VariableCollectionId:2:6"
+    },
+    "variables": {
+      "first": "VariableID:2:7",
+      "last": "VariableID:2:76",
+      "total": 70
+    }
+  },
+  "pendingValidations": [
+    "phase1-variable-audit",
+    "phase1-alias-audit",
+    "phase1-style-audit"
+  ],
+  "completedSteps": [
+    "phase0",
+    "P1.a",
+    "P1.b",
+    "P1.c",
+    "P1.d",
+    "P1.e"
+  ],
+  "blockedBy": "Figma MCP tool-call limit on Starter plan",
+  "nextStep": "Verify Inter styles, create text/effect styles, validate Phase 1, then build documentation, components, and the Search screen."
+}
