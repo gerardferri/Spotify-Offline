@@ -20,6 +20,13 @@ _AUDIO_EXTENSIONS = frozenset(
 )
 _MY_DRIVE_NAMES = ("Mi unidad", "My Drive")
 DOWNLOADS_FOLDER_NAME = "Descargas"
+_INVALID_FOLDER_CHARACTERS = frozenset('<>:"|?*')
+_MAX_FOLDER_NAME_LENGTH = 100
+_RESERVED_WINDOWS_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +60,64 @@ class LocalGoogleDriveService:
             raise RuntimeError("Google Drive para ordenador no está disponible.")
         self.downloads_root.mkdir(parents=True, exist_ok=True)
         return self.downloads_root
+
+    def list_folders(self) -> list[str]:
+        """List visible folders directly below the music root."""
+
+        if not self.music_root.is_dir():
+            return []
+        return sorted(
+            (
+                path.name
+                for path in self.music_root.iterdir()
+                if path.is_dir() and not path.name.startswith(".")
+            ),
+            key=str.casefold,
+        )
+
+    def resolve_folder(self, name: str | None) -> Path:
+        """Create and resolve a safe destination below the music root."""
+
+        if name is None or not name.strip():
+            target = self.downloads_root
+        else:
+            folder_name = name.strip()
+            reserved_name = folder_name.split(".", 1)[0].upper()
+            invalid = (
+                "/" in folder_name
+                or "\\" in folder_name
+                or folder_name in {".", ".."}
+                or Path(folder_name).is_absolute()
+                or reserved_name in _RESERVED_WINDOWS_NAMES
+                or any(char in _INVALID_FOLDER_CHARACTERS for char in folder_name)
+                # Control characters and overlong names reach the filesystem as
+                # an OSError, which would surface as an opaque server error.
+                or any(ord(char) < 32 for char in folder_name)
+                or len(folder_name) > _MAX_FOLDER_NAME_LENGTH
+            )
+            if invalid:
+                raise ValueError(
+                    "El nombre de la carpeta no es válido. Usa un nombre simple de "
+                    f"hasta {_MAX_FOLDER_NAME_LENGTH} caracteres, sin rutas, sin "
+                    "nombres reservados y sin los caracteres < > : \" | ? *."
+                )
+            target = self.music_root / folder_name
+
+        resolved_root = self.music_root.resolve()
+        resolved_target = target.resolve()
+        if resolved_target.parent != resolved_root:
+            raise ValueError(
+                "La carpeta debe estar dentro de la carpeta musical de Google Drive. "
+                "Elige un nombre de subcarpeta simple."
+            )
+        try:
+            resolved_target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError(
+                "No se ha podido crear esa carpeta en Google Drive. "
+                "Prueba con otro nombre más sencillo."
+            ) from exc
+        return resolved_target
 
     def scan_library(self) -> DriveLibrarySnapshot:
         if not self.configured:

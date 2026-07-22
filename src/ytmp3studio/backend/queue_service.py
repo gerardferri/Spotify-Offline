@@ -171,7 +171,13 @@ class QueueService:
             self._concurrency = value
             self._wake.notify_all()
 
-    def enqueue(self, video_ids: Iterable[str], quality_kbps: int | None = None) -> list[DownloadJob]:
+    def enqueue(
+        self,
+        video_ids: Iterable[str],
+        quality_kbps: int | None = None,
+        *,
+        output_dir: str | Path | None = None,
+    ) -> list[DownloadJob]:
         ids = list(dict.fromkeys(item.strip() for item in video_ids if isinstance(item, str) and item.strip()))
         if not ids:
             raise invalid_input("Selecciona al menos un vídeo.")
@@ -181,6 +187,10 @@ class QueueService:
             if not self._accepting:
                 raise AppError(ErrorCode.INVALID_STATE, "La aplicación se está cerrando.")
         settings = self._settings_getter()
+        if output_dir is None:
+            resolved_output_dir = str(Path(settings.download_dir).expanduser())
+        else:
+            resolved_output_dir = str(Path(output_dir).expanduser())
         metadata_items = []
         for video_id in ids:
             metadata = self._provider.resolve(video_id)
@@ -192,7 +202,6 @@ class QueueService:
         for metadata in metadata_items:
             identifier = str(uuid4())
             now = utc_now()
-            output_dir = str(Path(settings.download_dir).expanduser())
             job = DownloadJob(
                 id=identifier,
                 video_id=metadata.video_id,
@@ -202,8 +211,8 @@ class QueueService:
                 thumbnail_url=metadata.thumbnail_url,
                 duration_seconds=metadata.duration_seconds,
                 quality_kbps=quality_kbps or settings.quality_kbps,
-                output_dir=output_dir,
-                temp_dir=str(Path(output_dir) / ".ytmp3studio-tmp" / identifier),
+                output_dir=resolved_output_dir,
+                temp_dir=str(Path(resolved_output_dir) / ".ytmp3studio-tmp" / identifier),
                 state=JobState.QUEUED,
                 attempt_count=0,
                 max_attempts=settings.max_retries + 1,

@@ -4,7 +4,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer, driveTimer, driveSnapshot = null;
 let shuffleEnabled = false, repeatMode = 'off';
-const completedJobIds = new Set(); let jobsSeeded = false;
+const completedJobIds = new Set(); let jobsSeeded = false, pendingImport = [];
 const audio = $('#audio');
 
 function openDb() { return new Promise((resolve, reject) => { const request = indexedDB.open(DB_NAME, DB_VERSION); request.onupgradeneeded = () => { const database = request.result; const trackStore = database.createObjectStore('tracks', { keyPath: 'id' }); trackStore.createIndex('fingerprint', 'fingerprint', { unique: true }); trackStore.createIndex('createdAt', 'createdAt'); database.createObjectStore('playlists', { keyPath: 'id' }); const links = database.createObjectStore('playlistTracks', { keyPath: ['playlistId', 'trackId'] }); links.createIndex('playlistId', 'playlistId'); database.createObjectStore('settings', { keyPath: 'key' }); }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
@@ -14,6 +14,7 @@ function all(store) { return requestAsPromise(tx(store).getAll()); }
 function getSetting(key) { return requestAsPromise(tx('settings').get(key)).then(item => item?.value ?? ''); }
 function setSetting(key, value) { return requestAsPromise(tx('settings', 'readwrite').put({ key, value })); }
 function id() { return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`; }
+function songs(count) { return `${count} ${count === 1 ? 'canción' : 'canciones'}`; }
 function formatBytes(bytes = 0) { if (!bytes) return '0 MB'; const units = ['B', 'KB', 'MB', 'GB']; const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 3); return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`; }
 function time(seconds = 0) { seconds = Number.isFinite(seconds) ? Math.floor(seconds) : 0; return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
 function escape(text = '') { const el = document.createElement('span'); el.textContent = text; return el.innerHTML; }
@@ -24,12 +25,45 @@ function syncSafeInt(bytes, offset) { return ((bytes[offset] & 0x7f) << 21) | ((
 function decodeText(data, encoding) { if (!data?.length) return ''; const label = encoding === 1 || encoding === 2 ? 'utf-16' : encoding === 3 ? 'utf-8' : 'iso-8859-1'; try { return new TextDecoder(label).decode(data).replace(/^\uFEFF/, '').replace(/\0/g, '').trim(); } catch { return ''; } }
 function id3v2(buffer) { const bytes = new Uint8Array(buffer); const result = {}; if (String.fromCharCode(...bytes.slice(0, 3)) !== 'ID3') return result; const major = bytes[3], end = 10 + syncSafeInt(bytes, 6); let pos = 10; while (pos + 10 <= end && pos + 10 <= bytes.length) { const key = String.fromCharCode(...bytes.slice(pos, pos + 4)); const size = major === 4 ? syncSafeInt(bytes, pos + 4) : new DataView(buffer).getUint32(pos + 4); if (!key.trim() || size <= 0 || pos + 10 + size > bytes.length) break; const data = bytes.slice(pos + 10, pos + 10 + size); if (key === 'TIT2') result.title = decodeText(data.slice(1), data[0]); if (key === 'TPE1') result.artist = decodeText(data.slice(1), data[0]); if (key === 'TALB') result.album = decodeText(data.slice(1), data[0]); if (key === 'APIC') { let cursor = 1; while (cursor < data.length && data[cursor]) cursor++; const mime = new TextDecoder().decode(data.slice(1, cursor)) || 'image/jpeg'; cursor += 2; const descriptionEnd = data[0] === 1 || data[0] === 2 ? (() => { let p = cursor; while (p + 1 < data.length && (data[p] || data[p + 1])) p += 2; return p + 2; })() : (() => { let p = cursor; while (p < data.length && data[p]) p++; return p + 1; })(); if (descriptionEnd < data.length) result.cover = new Blob([data.slice(descriptionEnd)], { type: mime }); } pos += 10 + size; } return result; }
 function fallbackName(name) { return name.replace(/\.[^.]+$/, '').replace(/[._-]+/g, ' ').trim(); }
-async function importFiles(fileList) { const files = [...fileList].filter(file => file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)); if (!files.length) return; let added = 0, duplicates = 0; for (const file of files) { try { const fingerprint = await digest(file); const existing = await requestAsPromise(tx('tracks').index('fingerprint').get(fingerprint)); if (existing) { duplicates++; continue; } const info = id3v2(await file.arrayBuffer()); const track = { id: id(), fingerprint, blob: file, cover: info.cover || null, title: info.title || fallbackName(file.name), artist: info.artist || 'Artista desconocido', album: info.album || '', createdAt: new Date().toISOString(), size: file.size, mime: file.type || 'audio/mpeg', favorite: false, duration: null }; await requestAsPromise(tx('tracks', 'readwrite').put(track)); added++; } catch (error) { console.error('No se pudo importar el archivo', error); } } await refresh(); showToast(`${added} pista${added === 1 ? '' : 's'} importada${added === 1 ? '' : 's'}${duplicates ? ` · ${duplicates} ya existían` : ''}`); $('#fileInput').value = ''; }
+async function importFiles(fileList, { offerPlaylist = false } = {}) { const files = [...fileList].filter(file => file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)); if (!files.length) return; const imported = []; let added = 0, duplicates = 0; for (const file of files) { try { const fingerprint = await digest(file); const existing = await requestAsPromise(tx('tracks').index('fingerprint').get(fingerprint)); if (existing) { duplicates++; imported.push(existing); continue; } const info = id3v2(await file.arrayBuffer()); const track = { id: id(), fingerprint, blob: file, cover: info.cover || null, title: info.title || fallbackName(file.name), artist: info.artist || 'Artista desconocido', album: info.album || '', createdAt: new Date().toISOString(), size: file.size, mime: file.type || 'audio/mpeg', favorite: false, duration: null }; await requestAsPromise(tx('tracks', 'readwrite').put(track)); imported.push(track); added++; } catch (error) { console.error('No se pudo importar el archivo', error); } } await refresh(); showToast(`${added} pista${added === 1 ? '' : 's'} importada${added === 1 ? '' : 's'}${duplicates ? ` · ${duplicates} ya existían` : ''}`); $('#fileInput').value = ''; if (offerPlaylist && imported.length) offerImportPlaylist(imported); }
+
+// iOS no permite adjuntar una carpeta, así que la agrupación se propone a partir
+// de las etiquetas ID3 comunes: al importar el contenido de una carpeta de Drive
+// suele bastar con aceptar el nombre sugerido.
+function suggestPlaylistName(items) {
+  const distinct = key => [...new Set(items.map(item => String(item[key] || '').trim()).filter(Boolean))];
+  const albums = distinct('album');
+  if (albums.length === 1) return albums[0];
+  const artists = distinct('artist').filter(name => name !== 'Artista desconocido');
+  if (artists.length === 1) return artists[0];
+  return `Importación ${new Date().toLocaleDateString('es', { day: 'numeric', month: 'short' })}`;
+}
+
+function offerImportPlaylist(items) {
+  pendingImport = items;
+  const total = items.length;
+  $('#importPlaylistSummary').textContent = `${songs(total)} ${total === 1 ? 'lista' : 'listas'} para agrupar en una playlist.`;
+  $('#importPlaylistName').value = suggestPlaylistName(items);
+  $('#importPlaylistDialog').showModal();
+  $('#importPlaylistName').select();
+}
+
+async function createPlaylistFromImport() {
+  const name = $('#importPlaylistName').value.trim();
+  const items = pendingImport;
+  pendingImport = [];
+  if (!name || !items.length) return;
+  const playlistId = id();
+  await requestAsPromise(tx('playlists', 'readwrite').put({ id: playlistId, name, createdAt: new Date().toISOString() }));
+  for (const item of items) await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId: item.id, addedAt: new Date().toISOString() }));
+  await renderPlaylists();
+  showToast(`Playlist “${name}” creada con ${songs(items.length)}.`);
+}
 async function refresh() { tracks = await all('tracks'); tracks.sort((a, b) => sortNewest ? b.createdAt.localeCompare(a.createdAt) : a.title.localeCompare(b.title, 'es')); renderTracks(); await renderPlaylists(); updateStorage(); }
 function cover(track) { if (!track.cover) return '♫'; const url = URL.createObjectURL(track.cover); coverUrls.push(url); return `<img src="${url}" alt="">`; }
 function filteredTracks() { const query = $('#libraryFilter').value.trim().toLocaleLowerCase('es'); return tracks.filter(track => !query || `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase('es').includes(query)); }
 function renderTracks() { coverUrls.forEach(URL.revokeObjectURL); coverUrls = []; const list = $('#trackList'), visible = filteredTracks(); $('#emptyState').hidden = tracks.length !== 0; $('#librarySummary').textContent = tracks.length ? `${tracks.length} pista${tracks.length === 1 ? '' : 's'} guardada${tracks.length === 1 ? '' : 's'} para escuchar sin conexión.` : 'Importa tus archivos de audio para empezar.'; list.innerHTML = visible.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">${cover(track)}</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}${track.album ? ` · ${escape(track.album)}` : ''}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="menu-track" data-id="${track.id}" aria-label="Opciones">⋯</button></div></article>`).join(''); $$('.play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $$('.menu-track').forEach(button => button.onclick = () => openMenu(button.dataset.id)); }
-async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); const driveFolders = driveSnapshot?.connected ? driveSnapshot.folders || [] : []; $('#emptyPlaylists').hidden = playlists.length + driveFolders.length !== 0; const localMarkup = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${count} canción${count === 1 ? '' : 'es'}</small></span></button>`; }).join(''); const driveMarkup = driveFolders.map(folder => `<button class="playlist drive-playlist" data-drive-folder-id="${escape(folder.id)}"><span class="playlist-icon drive-playlist-icon">D</span><span><strong>${escape(folder.name)}</strong><small>${Number(folder.track_count || 0)} canción${Number(folder.track_count || 0) === 1 ? '' : 'es'} · Google Drive</small></span><span class="remote-pill">Nube</span></button>`).join(''); $('#playlistList').innerHTML = localMarkup + driveMarkup; $$('.playlist[data-id]').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); $$('.drive-playlist').forEach(button => button.onclick = () => focusDriveFolder(button.dataset.driveFolderId)); }
+async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); const driveFolders = driveSnapshot?.connected ? driveSnapshot.folders || [] : []; $('#emptyPlaylists').hidden = playlists.length + driveFolders.length !== 0; const localMarkup = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${songs(count)}</small></span></button>`; }).join(''); const driveMarkup = driveFolders.map(folder => `<button class="playlist drive-playlist" data-drive-folder-id="${escape(folder.id)}"><span class="playlist-icon drive-playlist-icon">D</span><span><strong>${escape(folder.name)}</strong><small>${songs(Number(folder.track_count || 0))} · Google Drive</small></span><span class="remote-pill">Nube</span></button>`).join(''); $('#playlistList').innerHTML = localMarkup + driveMarkup; $$('.playlist[data-id]').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); $$('.drive-playlist').forEach(button => button.onclick = () => focusDriveFolder(button.dataset.driveFolderId)); }
 async function play(trackId) {
   const track = tracks.find(item => item.id === trackId);
   if (!track) return;
@@ -145,17 +179,30 @@ function toggleRepeat() {
 async function openMenu(trackId) { selectedTrack = tracks.find(track => track.id === trackId); if (!selectedTrack) return; $('#menuTrackTitle').textContent = selectedTrack.title; $('#favoriteAction').textContent = selectedTrack.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'; const playlists = await all('playlists'); $('#playlistSelect').innerHTML = playlists.length ? playlists.map(item => `<option value="${item.id}">${escape(item.name)}</option>`).join('') : '<option value="">Crea primero una playlist</option>'; $('#addToPlaylist').disabled = !playlists.length; $('#trackMenu').showModal(); }
 async function addToPlaylist() { const playlistId = $('#playlistSelect').value; if (!playlistId || !selectedTrack) return; await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId: selectedTrack.id, addedAt: new Date().toISOString() })); $('#trackMenu').close(); await renderPlaylists(); showToast('Añadida a la playlist.'); }
 async function toggleFavorite() { if (!selectedTrack) return; selectedTrack.favorite = !selectedTrack.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(selectedTrack)); $('#trackMenu').close(); await refresh(); }
-async function deleteTrack() { if (!selectedTrack || !confirm(`¿Eliminar “${selectedTrack.title}” de este iPhone?`)) return; const transaction = db.transaction(['tracks', 'playlistTracks'], 'readwrite'); transaction.objectStore('tracks').delete(selectedTrack.id); const links = await requestAsPromise(transaction.objectStore('playlistTracks').getAll()); links.filter(link => link.trackId === selectedTrack.id).forEach(link => transaction.objectStore('playlistTracks').delete([link.playlistId, link.trackId])); await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); $('#trackMenu').close(); if (activeTrack?.id === selectedTrack.id) { audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; activeTrack = null; document.title = 'YT-MP3 Studio · Biblioteca offline'; } await refresh(); showToast('Pista eliminada.'); }
+async function deleteTrack() { if (!selectedTrack || !confirm(`¿Eliminar “${selectedTrack.title}” de este dispositivo?`)) return; const transaction = db.transaction(['tracks', 'playlistTracks'], 'readwrite'); transaction.objectStore('tracks').delete(selectedTrack.id); const links = await requestAsPromise(transaction.objectStore('playlistTracks').getAll()); links.filter(link => link.trackId === selectedTrack.id).forEach(link => transaction.objectStore('playlistTracks').delete([link.playlistId, link.trackId])); await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); $('#trackMenu').close(); if (activeTrack?.id === selectedTrack.id) { audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; activeTrack = null; document.title = 'YT-MP3 Studio · Biblioteca offline'; } await refresh(); showToast('Pista eliminada.'); }
 async function openPlaylist(playlistId) { const playlists = await all('playlists'); const playlist = playlists.find(item => item.id === playlistId); const links = await all('playlistTracks'); const list = links.filter(link => link.playlistId === playlistId).map(link => tracks.find(track => track.id === link.trackId)).filter(Boolean); $('#playlistDialogTitle').textContent = playlist.name; $('#playlistTracks').innerHTML = list.length ? list.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">♫</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}</small></div><button class="play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">▶</button></article>`).join('') : '<p class="empty-state compact">Esta playlist está vacía.</p>'; $$('#playlistTracks .play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $('#playlistDialog').showModal(); }
 async function createPlaylist(event) { event.preventDefault(); const name = $('#playlistName').value.trim(); if (!name) return; await requestAsPromise(tx('playlists', 'readwrite').put({ id: id(), name, createdAt: new Date().toISOString() })); event.target.reset(); await renderPlaylists(); showToast('Playlist creada.'); }
 async function exportBackup() { const library = await all('tracks'), playlists = await all('playlists'), links = await all('playlistTracks'); const backup = { version: 1, exportedAt: new Date().toISOString(), tracks: library.map(({ blob, cover, ...track }) => track), playlists, playlistTracks: links.map(link => ({ playlistId: link.playlistId, fingerprint: library.find(track => track.id === link.trackId)?.fingerprint })).filter(link => link.fingerprint) }; const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })); const link = Object.assign(document.createElement('a'), { href: url, download: `ytmp3-studio-backup-${new Date().toISOString().slice(0,10)}.json` }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); showToast('Copia exportada. Los audios no se incluyen.'); }
 async function restoreBackup(file) { try { const backup = JSON.parse(await file.text()); if (backup.version !== 1 || !Array.isArray(backup.playlists)) throw new Error('Formato no válido'); const current = await all('tracks'); const byFingerprint = new Map(current.map(track => [track.fingerprint, track.id])); const playlistById = new Map(); for (const playlist of backup.playlists) { const newId = id(); playlistById.set(playlist.id, newId); await requestAsPromise(tx('playlists', 'readwrite').put({ id: newId, name: playlist.name, createdAt: playlist.createdAt || new Date().toISOString() })); } let matched = 0; for (const link of backup.playlistTracks || []) { const trackId = byFingerprint.get(link.fingerprint), playlistId = playlistById.get(link.playlistId); if (trackId && playlistId) { await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId, addedAt: new Date().toISOString() })); matched++; } } for (const saved of backup.tracks || []) { const existing = current.find(track => track.fingerprint === saved.fingerprint); if (existing && typeof saved.favorite === 'boolean') { existing.favorite = saved.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(existing)); } } await refresh(); showToast(`Copia restaurada: ${matched} pistas asociadas.`); } catch (error) { showToast('No se pudo leer esa copia de seguridad.'); console.error(error); } finally { $('#restoreInput').value = ''; } }
 async function updateStorage() { const ownBytes = tracks.reduce((total, track) => total + (track.size || 0), 0); let suffix = `Música guardada: ${formatBytes(ownBytes)}.`; if (navigator.storage?.estimate) { const estimate = await navigator.storage.estimate(); suffix += ` Espacio del sitio: ${formatBytes(estimate.usage)} de ${formatBytes(estimate.quota)}.`; } $('#storageUsage').textContent = suffix; }
-async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este iPhone? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
+async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este dispositivo? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
 
-function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-// La web siempre la sirve el propio PC (localhost o su IP de la WiFi), así que
-// las peticiones van a su mismo origen y no hacen falta dirección ni clave.
+function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'search' && PC_HOSTED) loadDownloadFolders(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+// Cuando la web la sirve el PC (localhost o su IP privada de la WiFi) las
+// peticiones van a su mismo origen y no hacen falta dirección ni clave. Servida
+// desde un alojamiento estático (GitHub Pages) no hay PC detrás: la aplicación
+// pasa a modo reproductor y oculta lo que dependería de él.
+const PC_HOSTED = ['localhost', '127.0.0.1'].includes(location.hostname)
+  || /^(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)$/.test(location.hostname);
+
+function applyPlayerOnlyMode() {
+  $$('.nav-item').forEach(item => { if (['search', 'downloads'].includes(item.dataset.page)) item.hidden = true; });
+  ['#desktopDownload', '#libraryDownload', '#driveHub', '#serverBanner'].forEach(selector => { const el = $(selector); if (el) el.hidden = true; });
+  const driveSettings = document.querySelector('.drive-settings');
+  if (driveSettings) driveSettings.hidden = true;
+  $('#playerOnlyNote').hidden = false;
+}
+
 async function api(path, options = {}) { const response = await fetch(`${location.origin}${path}`, { ...options, cache: 'no-store', headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } }); if (!response.ok) { let message = `El PC respondió con error ${response.status}.`; try { message = (await response.json()).error?.message || message; } catch {} throw new Error(message); } return response; }
 
 function driveErrorHint(error) {
@@ -193,7 +240,7 @@ function renderDriveFolders(folders = []) {
     const count = Number(folder.track_count || 0);
     const tracks = Array.isArray(folder.tracks) ? folder.tracks : [];
     const trackMarkup = tracks.length ? `<div class="drive-remote-tracks">${tracks.map(track => { const trackId = track.file_id || track.id; return `<div><span>${escape(track.title || track.name || 'Canción')}</span>${trackId ? `<button class="quiet-button save-drive-track" data-track-id="${escape(trackId)}" data-title="${escape(track.title || track.name || 'cancion')}">Guardar en iPhone</button>` : ''}</div>`; }).join('')}</div>` : '';
-    return `<article class="drive-folder" data-drive-folder="${escape(folder.id)}" tabindex="0" role="button" aria-label="Abrir ${escape(folder.name || 'carpeta de Drive')}"><span class="drive-folder-icon" aria-hidden="true"></span><div><strong>${escape(folder.name || 'Carpeta sin nombre')}</strong><small>${count} canción${count === 1 ? '' : 'es'} · Toca para verlas</small>${trackMarkup}</div><span class="drive-folder-count">${count}</span></article>`;
+    return `<article class="drive-folder" data-drive-folder="${escape(folder.id)}" tabindex="0" role="button" aria-label="Abrir ${escape(folder.name || 'carpeta de Drive')}"><span class="drive-folder-icon" aria-hidden="true"></span><div><strong>${escape(folder.name || 'Carpeta sin nombre')}</strong><small>${songs(count)} · Toca para verlas</small>${trackMarkup}</div><span class="drive-folder-count">${count}</span></article>`;
   }).join('');
   $$('.drive-folder').forEach(folder => { folder.onclick = event => { if (!event.target.closest('button')) loadDriveFolderTracks(folder.dataset.driveFolder); }; folder.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); loadDriveFolderTracks(folder.dataset.driveFolder); } }; });
   $$('.save-drive-track').forEach(button => button.onclick = event => { event.stopPropagation(); saveDriveTrack(button); });
@@ -233,7 +280,7 @@ async function applyDrivePayload(payload) {
   $('#driveAccountName').textContent = driveSnapshot.account_name || driveSnapshot.folder_name;
   $('#driveAccountEmail').textContent = email || (driveSnapshot.mode === 'desktop' ? 'Google Drive para ordenador · carpeta sincronizada' : 'Google Drive conectado en el PC');
   $('#driveDisconnect').hidden = !driveSnapshot.can_disconnect;
-  $('#driveSyncSummary').textContent = `${driveSnapshot.track_count} canción${driveSnapshot.track_count === 1 ? '' : 'es'} en ${driveSnapshot.folders.length} carpeta${driveSnapshot.folders.length === 1 ? '' : 's'}`;
+  $('#driveSyncSummary').textContent = `${songs(driveSnapshot.track_count)} en ${driveSnapshot.folders.length} carpeta${driveSnapshot.folders.length === 1 ? '' : 's'}`;
   $('#driveLastSync').textContent = formatDriveDate(driveSnapshot.last_sync_at);
   renderDriveFolders(driveSnapshot.folders);
   setDriveState(driveSnapshot.syncing ? 'syncing' : 'connected');
@@ -295,7 +342,30 @@ function focusDriveFolder(folderId) {
 async function updateServerBanner() { const banner = $('#serverBanner'); try { const result = await (await api('/api/health')).json(); banner.classList.add('online'); $('#serverStatus').textContent = 'PC conectado'; $('#serverHint').textContent = result.name || location.host; return true; } catch (error) { banner.classList.remove('online'); $('#serverStatus').textContent = 'PC no disponible'; $('#serverHint').textContent = 'Comprueba que el PC esté encendido y en la misma WiFi.'; return false; } }
 async function searchRemote(event) { event.preventDefault(); $('#searchEmpty').hidden = true; $('#searchResults').innerHTML = '<p class="loading">Buscando desde el PC…</p>'; try { const response = await api(`/api/search?q=${encodeURIComponent($('#remoteQuery').value.trim())}&limit=12`); const payload = await response.json(); renderSearchResults(payload.results || []); } catch (error) { $('#searchResults').innerHTML = `<p class="error-card">${escape(error.message)}</p>`; } }
 function renderSearchResults(results) { $('#searchEmpty').hidden = results.length !== 0; $('#searchResults').innerHTML = results.length ? results.map(result => `<article class="remote-result"><div class="result-art">${result.thumbnail_url ? `<img src="${escape(result.thumbnail_url)}" alt="" loading="lazy">` : '♫'}</div><div><strong>${escape(result.title)}</strong><small>${escape(result.channel || 'Canal desconocido')}${result.duration_seconds ? ` · ${time(result.duration_seconds)}` : ''}</small></div><button class="primary enqueue-result" data-video-id="${escape(result.video_id)}">Descargar</button></article>`).join('') : '<p class="error-card">No se encontraron resultados.</p>'; $$('.enqueue-result').forEach(button => button.onclick = () => enqueueRemote(button)); }
-async function enqueueRemote(button) { button.disabled = true; button.textContent = 'Enviando…'; try { await api('/api/jobs', { method: 'POST', body: JSON.stringify({ video_id: button.dataset.videoId, quality_kbps: 192 }) }); showToast('Descarga enviada al PC.'); navigate('downloads'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Descargar'; } }
+async function enqueueRemote(button) { button.disabled = true; button.textContent = 'Enviando…'; try { const folder = $('#downloadFolderRow').hidden ? '' : $('#downloadFolder').value; await api('/api/jobs', { method: 'POST', body: JSON.stringify({ video_id: button.dataset.videoId, quality_kbps: 192, folder }) }); if (folder) await setSetting('lastDownloadFolder', folder); showToast(folder ? `Descarga enviada al PC · ${folder}` : 'Descarga enviada al PC.'); navigate('downloads'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Descargar'; } }
+
+async function loadDownloadFolders(preferred) {
+  const row = $('#downloadFolderRow'), select = $('#downloadFolder');
+  try {
+    const { folders } = await (await api('/api/drive/folders')).json();
+    if (!Array.isArray(folders) || !folders.length) { row.hidden = true; return; }
+    const chosen = preferred || select.value || await getSetting('lastDownloadFolder');
+    select.innerHTML = folders.map(name => `<option value="${escape(name)}">${escape(name)}</option>`).join('');
+    select.value = folders.includes(chosen) ? chosen : (folders.includes('Descargas') ? 'Descargas' : folders[0]);
+    row.hidden = false;
+  } catch { row.hidden = true; }
+}
+
+async function createDownloadFolder() {
+  const name = (prompt('Nombre de la nueva carpeta de Google Drive:') || '').trim();
+  if (!name) return;
+  try {
+    const payload = await (await api('/api/drive/folders', { method: 'POST', body: JSON.stringify({ name }) })).json();
+    await loadDownloadFolders(payload.created);
+    await setSetting('lastDownloadFolder', payload.created);
+    showToast(`Carpeta “${payload.created}” creada en Google Drive.`);
+  } catch (error) { showToast(error.message); }
+}
 const jobLabels = { queued: 'En espera', resolving: 'Preparando', downloading: 'Descargando', converting: 'Convirtiendo', completed: 'Lista', failed: 'Error', interrupted: 'Interrumpida', paused: 'Pausada', cancelled: 'Cancelada' };
 async function loadJobs() { try { const response = await api('/api/jobs'); const payload = await response.json(); renderJobs(payload.jobs || []); } catch (error) { $('#jobList').innerHTML = `<p class="error-card">${escape(error.message)}</p>`; $('#jobsEmpty').hidden = true; } }
 function noticeCompletedJobs(jobs) { const finished = jobs.filter(job => job.state === 'completed').map(job => job.id); const fresh = finished.filter(jobId => !completedJobIds.has(jobId)); finished.forEach(jobId => completedJobIds.add(jobId)); if (!jobsSeeded) { jobsSeeded = true; return; } if (fresh.length && driveSnapshot?.connected) setTimeout(() => loadDriveStatus({ quiet: true }), 1500); }
@@ -313,9 +383,10 @@ function bind() {
   else window.addEventListener('resize', syncPlayerClearance);
   $$('.nav-item').forEach(button => button.onclick = () => navigate(button.dataset.page));
   $('#desktopDownload').onclick = $('#libraryDownload').onclick = () => { navigate('search'); requestAnimationFrame(() => $('#remoteQuery').focus()); };
-  $('#importButton').onclick = () => $('#fileInput').click();
+  $('#importButton').onclick = $('#playerOnlyImport').onclick = () => $('#fileInput').click();
   $('#emptyImportButton').onclick = $('#emptyImportButton2').onclick = () => $('#fileInput').click();
-  $('#fileInput').onchange = event => importFiles(event.target.files);
+  $('#fileInput').onchange = event => importFiles(event.target.files, { offerPlaylist: true });
+  $('#importPlaylistDialog').addEventListener('close', () => { if ($('#importPlaylistDialog').returnValue === 'create') createPlaylistFromImport(); else pendingImport = []; });
   $('#libraryFilter').oninput = renderTracks;
   $('#sortButton').onclick = () => { sortNewest = !sortNewest; $('#sortButton').textContent = sortNewest ? 'Recientes' : 'A–Z'; $('#sortButton').setAttribute('aria-pressed', String(sortNewest)); refresh(); };
   $('#newPlaylistForm').onsubmit = createPlaylist;
@@ -347,6 +418,7 @@ function bind() {
   audio.onended = () => next(true);
 
   $('#remoteSearchForm').onsubmit = searchRemote;
+  $('#newDownloadFolder').onclick = createDownloadFolder;
   $('#refreshJobs').onclick = loadJobs;
   $('#driveConnect').onclick = connectDrive;
   $('#driveSync').onclick = syncDrive;
@@ -357,5 +429,22 @@ function bind() {
   $('#requestPersistence').onclick = async () => { const granted = await navigator.storage?.persist?.(); showToast(granted ? 'Safari protegerá los datos cuando sea posible.' : 'Safari no pudo garantizar el almacenamiento.'); };
   $('#clearLibrary').onclick = clearLibrary;
 }
-async function init() { db = await openDb(); bind(); await refresh(); await updateServerBanner(); const driveCallback = new URLSearchParams(location.search).get('drive') === 'connected'; await loadDriveStatus({ autoSync: true }); if (driveCallback) { const cleanUrl = new URL(location.href); cleanUrl.searchParams.delete('drive'); history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`); showToast('Google Drive conectado.'); } jobsTimer = setInterval(() => { if ($('#page-downloads').classList.contains('is-visible') && !document.hidden) loadJobs(); }, 4000); driveTimer = setInterval(() => { if (!document.hidden && driveSnapshot?.connected) syncDrive({ quiet: true }); }, 300000); if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error); }
+async function init() {
+  db = await openDb();
+  bind();
+  await refresh();
+  if (!PC_HOSTED) {
+    // Sin PC detrás no hay API que consultar: cualquier llamada daría 404.
+    applyPlayerOnlyMode();
+    navigate('library');
+  } else {
+    await updateServerBanner();
+    const driveCallback = new URLSearchParams(location.search).get('drive') === 'connected';
+    await loadDriveStatus({ autoSync: true });
+    if (driveCallback) { const cleanUrl = new URL(location.href); cleanUrl.searchParams.delete('drive'); history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`); showToast('Google Drive conectado.'); }
+    jobsTimer = setInterval(() => { if ($('#page-downloads').classList.contains('is-visible') && !document.hidden) loadJobs(); }, 4000);
+    driveTimer = setInterval(() => { if (!document.hidden && driveSnapshot?.connected) syncDrive({ quiet: true }); }, 300000);
+  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error);
+}
 init().catch(error => { console.error(error); showToast('No se pudo abrir la biblioteca local.'); });

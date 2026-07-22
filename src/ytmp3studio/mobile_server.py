@@ -1,10 +1,10 @@
 """Personal HTTP API and local web app for YT-MP3 Studio.
 
-The server binds to loopback by default. Expose it through a private HTTPS
-transport such as Tailscale Serve; do not forward the port on the router.
-The iPhone API requires a persistent bearer token. ``--web`` also serves the
-PWA on the same loopback-only address, so it can be used directly from a PC
-browser without exposing a port or requiring a token in that browser.
+The server binds to loopback by default and never opens a router port. ``--web``
+serves the PWA on that same loopback address so it can be used from this PC's
+browser without a token. Adding ``--lan`` binds every interface and extends that
+tokenless trust to private RFC1918 addresses, which is what lets a phone on the
+same home WiFi use it; public addresses still require the bearer token.
 """
 
 from __future__ import annotations
@@ -133,9 +133,9 @@ class MobileBackend:
 
         if not (self.local_drive_service and self.local_drive_service.is_connected()):
             return
-        Thread(target=self._sync_drive_after_download, daemon=True).start()
+        Thread(target=self._sync_drive_quietly, daemon=True).start()
 
-    def _sync_drive_after_download(self) -> None:
+    def _sync_drive_quietly(self) -> None:
         try:
             self._sync_drive(None, "Google Drive para ordenador")
         except Exception:  # noqa: BLE001 - background refresh must never kill the worker
@@ -144,8 +144,31 @@ class MobileBackend:
     def search(self, query: str, limit: int) -> list[dict[str, Any]]:
         return [_jsonable(result) for result in self.search_service.search(query, limit)]
 
-    def enqueue(self, video_id: str, quality_kbps: int | None) -> list[dict[str, Any]]:
-        return [_jsonable(job) for job in self.queue.enqueue([video_id], quality_kbps)]
+    def enqueue(
+        self, video_id: str, quality_kbps: int | None, folder: str | None = None
+    ) -> list[dict[str, Any]]:
+        output_dir = None
+        if self.local_drive_service and self.local_drive_service.is_connected():
+            # Raises ValueError with a user-facing message on an unsafe name.
+            output_dir = self.local_drive_service.resolve_folder(folder)
+        return [
+            _jsonable(job)
+            for job in self.queue.enqueue([video_id], quality_kbps, output_dir=output_dir)
+        ]
+
+    def drive_folder_names(self) -> list[str]:
+        if not (self.local_drive_service and self.local_drive_service.is_connected()):
+            return []
+        return self.local_drive_service.list_folders()
+
+    def create_drive_folder(self, name: str) -> dict[str, Any]:
+        if not name or not name.strip():
+            raise ValueError("Escribe un nombre para la carpeta.")
+        if not (self.local_drive_service and self.local_drive_service.is_connected()):
+            raise ValueError("Google Drive para ordenador no está disponible en este PC.")
+        target = self.local_drive_service.resolve_folder(name)
+        Thread(target=self._sync_drive_quietly, daemon=True).start()
+        return {"created": target.name, "folders": self.drive_folder_names()}
 
     def queue_snapshot(self) -> list[dict[str, Any]]:
         library, _total = self.library.list("", limit=5000, offset=0)
@@ -336,6 +359,9 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
                 self.server.backend.complete_drive_authorization(code, state)
                 self._redirect("/?drive=connected")
                 return
+            if parsed.path == "/api/drive/folders":
+                self._json(HTTPStatus.OK, {"folders": self.server.backend.drive_folder_names()})
+                return
             if parsed.path.startswith("/api/drive/folders/") and parsed.path.endswith("/tracks"):
                 folder_id = parsed.path.removeprefix("/api/drive/folders/").removesuffix("/tracks").strip("/")
                 self._json(HTTPStatus.OK, {"tracks": self.server.backend.drive_tracks(folder_id)})
@@ -374,7 +400,24 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
                 video_id = str(payload.get("video_id", "")).strip()
                 quality_value = payload.get("quality_kbps")
                 quality = None if quality_value in (None, "") else int(quality_value)
-                self._json(HTTPStatus.ACCEPTED, {"jobs": self.server.backend.enqueue(video_id, quality)})
+                folder_value = payload.get("folder")
+                folder = None if folder_value in (None, "") else str(folder_value)
+                try:
+                    jobs = self.server.backend.enqueue(video_id, quality, folder)
+                except ValueError as exc:
+                    # Surface the folder message instead of a generic "petición no válida".
+                    self._json_error(HTTPStatus.BAD_REQUEST, "INVALID_FOLDER", str(exc))
+                    return
+                self._json(HTTPStatus.ACCEPTED, {"jobs": jobs})
+                return
+            if parsed.path == "/api/drive/folders":
+                name = str(self._read_json().get("name", "")).strip()
+                try:
+                    created = self.server.backend.create_drive_folder(name)
+                except ValueError as exc:
+                    self._json_error(HTTPStatus.BAD_REQUEST, "INVALID_FOLDER", str(exc))
+                    return
+                self._json(HTTPStatus.OK, created)
                 return
             if parsed.path == "/api/drive/connect":
                 if not self._is_local_web_request():

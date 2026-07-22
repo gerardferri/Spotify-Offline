@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from ytmp3studio.backend.local_drive_service import (
     LocalGoogleDriveService,
     detect_google_drive,
@@ -65,3 +67,103 @@ def test_environment_override_detects_prelinked_drive(monkeypatch, tmp_path) -> 
 
     assert location is not None
     assert location.music_root == root
+
+
+def test_list_folders_returns_visible_direct_subfolders_casefold_sorted(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    root.mkdir(parents=True)
+    for name in ("zeta", "Álbum", "beta", ".oculta"):
+        (root / name).mkdir()
+    (root / "canción.mp3").write_bytes(b"audio")
+
+    assert LocalGoogleDriveService(root).list_folders() == ["beta", "zeta", "Álbum"]
+
+
+def test_list_folders_returns_empty_when_music_root_does_not_exist(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    assert LocalGoogleDriveService(root).list_folders() == []
+
+
+@pytest.mark.parametrize("name", [None, "", "   "])
+def test_resolve_folder_uses_downloads_as_default(name, tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    service = LocalGoogleDriveService(root)
+
+    target = service.resolve_folder(name)
+
+    assert target == (root / "Descargas").resolve()
+    assert target.is_dir()
+
+
+def test_resolve_folder_creates_valid_subfolder(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    target = LocalGoogleDriveService(root).resolve_folder(" Favoritas ")
+
+    assert target == (root / "Favoritas").resolve()
+    assert target.is_dir()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../fuera",
+        "..\\fuera",
+        "..",
+        "/absoluta",
+        "\\absoluta",
+        "C:\\Musica",
+        "C:",
+        "CON",
+        "prn.txt",
+        "AUX",
+        "NUL",
+        "COM1",
+        "com9.mp3",
+        "LPT1",
+        "lpt9.txt",
+        "menor<",
+        "mayor>",
+        'comillas"',
+        "barra|",
+        "pregunta?",
+        "asterisco*",
+        "dos:puntos",
+    ],
+)
+def test_resolve_folder_rejects_traversal_and_invalid_windows_names(
+    name, tmp_path
+) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    with pytest.raises(ValueError, match="carpeta"):
+        LocalGoogleDriveService(root).resolve_folder(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "a\x00b",
+        "a\x08b",
+        "a\nb",
+        "a\tb",
+        "x" * 101,
+    ],
+)
+def test_resolve_folder_rejects_names_the_filesystem_would_choke_on(name, tmp_path) -> None:
+    """These used to escape validation and surface as an opaque OSError/500."""
+
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    with pytest.raises(ValueError, match="carpeta"):
+        LocalGoogleDriveService(root).resolve_folder(name)
+
+
+def test_resolve_folder_accepts_a_name_at_the_length_limit(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    target = LocalGoogleDriveService(root).resolve_folder("x" * 100)
+
+    assert target.name == "x" * 100
+    assert target.is_dir()

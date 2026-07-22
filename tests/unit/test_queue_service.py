@@ -123,6 +123,58 @@ def make_queue(tmp_path, provider, *, concurrency=2, retries=2):
     return queue, jobs, library, history
 
 
+def make_inactive_queue(download_dir: Path):
+    jobs, library, history = Jobs(), Library(), History()
+    settings = Settings(str(download_dir))
+    queue = QueueService(
+        jobs,
+        library,
+        history,
+        Provider(download_dir),
+        lambda: settings,
+    )
+    return queue, jobs
+
+
+def test_enqueue_without_output_dir_uses_settings_download_dir(tmp_path):
+    configured_dir = tmp_path / "configured"
+    queue, _jobs = make_inactive_queue(configured_dir)
+    try:
+        job = queue.enqueue(["default-destination"])[0]
+
+        assert job.output_dir == str(configured_dir)
+        assert job.temp_dir == str(configured_dir / ".ytmp3studio-tmp" / job.id)
+    finally:
+        queue.shutdown()
+
+
+def test_enqueue_with_output_dir_uses_override(tmp_path):
+    override_dir = tmp_path / "override"
+    queue, _jobs = make_inactive_queue(tmp_path / "configured")
+    try:
+        job = queue.enqueue(["custom-destination"], output_dir=override_dir)[0]
+
+        assert job.output_dir == str(override_dir)
+        assert job.temp_dir == str(override_dir / ".ytmp3studio-tmp" / job.id)
+    finally:
+        queue.shutdown()
+
+
+def test_enqueue_multiple_video_ids_share_output_dir(tmp_path):
+    override_dir = tmp_path / "shared"
+    queue, _jobs = make_inactive_queue(tmp_path / "configured")
+    try:
+        jobs = queue.enqueue(["first", "second", "third"], output_dir=override_dir)
+
+        assert {job.output_dir for job in jobs} == {str(override_dir)}
+        assert all(
+            job.temp_dir == str(override_dir / ".ytmp3studio-tmp" / job.id)
+            for job in jobs
+        )
+    finally:
+        queue.shutdown()
+
+
 def test_fifo_completion_and_library_persistence(tmp_path):
     provider = Provider(tmp_path)
     queue, jobs, library, history = make_queue(tmp_path, provider, concurrency=1)

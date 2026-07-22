@@ -53,7 +53,10 @@ Este modo hace visible el servidor a **cualquier dispositivo de tu red doméstic
 
 ## iPhone: PWA y Google Drive
 
-La carpeta `prototype/` contiene una PWA instalable desde Safari. La aplicación de Windows busca, descarga y convierte contenido autorizado. La web puede vincular Google Drive desde el PC, convertir las subcarpetas de `YT-MP3 Studio` en playlists y copiar al iPhone las canciones elegidas para reproducirlas sin conexión.
+La carpeta `prototype/` contiene una PWA instalable desde Safari. **La misma web se comporta de dos formas según quién la sirva:**
+
+- **Servida por el PC** (`127.0.0.1` o su IP de la WiFi): aplicación completa, con búsqueda, descargas y Google Drive.
+- **Servida desde GitHub Pages**: modo reproductor. Oculta las secciones que necesitan el PC, porque desde un origen HTTPS el navegador no permite llamar al servidor local por HTTP. La música se añade importando archivos.
 
 Para instalar la PWA:
 
@@ -66,12 +69,20 @@ Para instalar la PWA:
 La aplicación detecta Google Drive para ordenador y lee su carpeta local sincronizada. No necesita credenciales de desarrollador, OAuth ni una API de pago. Consulta [GOOGLE_DRIVE_SETUP.md](GOOGLE_DRIVE_SETUP.md).
 
 1. Abre la web local y entra en **Biblioteca > Google Drive**.
-2. La primera sincronización crea o reutiliza `Mi unidad\YT-MP3 Studio`.
-3. Añade carpetas y canciones dentro de `YT-MP3 Studio` en Drive.
-4. La aplicación sincroniza al abrirse, periódicamente mientras está activa y al pulsar **Sincronizar**.
-5. Cada subcarpeta aparece como playlist. Abre una y pulsa **Guardar en iPhone** para conservar canciones offline.
+2. La primera sincronización crea o reutiliza `Mi unidad\YT-MP3 Studio` y su subcarpeta `Descargas`.
+3. Al descargar, elige la carpeta de destino en **Guardar en**; puedes crear una nueva desde ahí.
+4. La aplicación sincroniza al abrirse, al terminar cada descarga, periódicamente y al pulsar **Sincronizar**.
+5. Cada subcarpeta aparece como playlist.
 
-Los MP3 se almacenan en Google Drive y, al guardarlos, se copia una versión a IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
+### Llevar la música al iPhone
+
+1. En el iPhone, abre la PWA instalada desde GitHub Pages.
+2. Pulsa **Importar audio** y, en la app **Archivos**, entra en Google Drive y selecciona las canciones de la carpeta que quieras.
+3. La web propone un nombre de playlist a partir de las etiquetas del audio y la crea con esas canciones.
+
+iOS no permite adjuntar una carpeta a una página web (`webkitdirectory` no está soportado en Safari), por eso se seleccionan los archivos y se confirma el nombre.
+
+Los MP3 se almacenan en Google Drive y, al importarlos, se copia una versión a IndexedDB dentro del iPhone. No se suben a GitHub. Safari controla la cuota y puede borrar los datos al limpiar el sitio, así que conviene exportar copias periódicas; estas contienen metadatos y playlists, pero no el audio.
 
 La PWA también funciona como web local completa del PC mediante `ABRIR-YT-MP3-STUDIO-WEB.cmd`; ya no hace falta ejecutar un servidor estático aparte. El service worker solo se registra en un origen seguro o en `localhost`.
 

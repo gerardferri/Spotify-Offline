@@ -30,8 +30,27 @@ class FakeBackend:
     def search(self, query: str, limit: int):
         return [{"video_id": "abc", "title": query, "channel": "Canal", "duration_seconds": 42}][:limit]
 
-    def enqueue(self, video_id: str, quality_kbps: int | None):
-        return [{"id": "job-1", "video_id": video_id, "quality_kbps": quality_kbps, "state": "queued"}]
+    def enqueue(self, video_id: str, quality_kbps: int | None, folder: str | None = None):
+        if folder == "../fuera":
+            raise ValueError("El nombre de la carpeta no es válido.")
+        self.last_folder = folder
+        return [
+            {
+                "id": "job-1",
+                "video_id": video_id,
+                "quality_kbps": quality_kbps,
+                "state": "queued",
+                "output_dir": folder or "Descargas",
+            }
+        ]
+
+    def drive_folder_names(self):
+        return ["Descargas", "Rock"]
+
+    def create_drive_folder(self, name: str):
+        if not name.strip():
+            raise ValueError("Escribe un nombre para la carpeta.")
+        return {"created": name, "folders": ["Descargas", "Rock", name]}
 
     def queue_snapshot(self):
         return [{"id": "job-1", "state": "completed", "track_id": "track-1"}]
@@ -183,6 +202,46 @@ def test_audio_supports_byte_ranges(api):
 )
 def test_parse_range(header, size, expected):
     assert _parse_range(header, size) == expected
+
+
+def test_download_can_target_a_drive_folder(api):
+    listed, payload = request(api, "GET", "/api/drive/folders")
+    assert listed.status == 200
+    assert json.loads(payload)["folders"] == ["Descargas", "Rock"]
+
+    queued, payload = request(
+        api, "POST", "/api/jobs", body={"video_id": "abc", "quality_kbps": 192, "folder": "Rock"}
+    )
+    assert queued.status == 202
+    assert json.loads(payload)["jobs"][0]["output_dir"] == "Rock"
+
+    default, payload = request(api, "POST", "/api/jobs", body={"video_id": "abc"})
+    assert default.status == 202
+    assert json.loads(payload)["jobs"][0]["output_dir"] == "Descargas"
+
+
+def test_unsafe_folder_names_are_refused_with_a_readable_message(api):
+    refused, payload = request(
+        api, "POST", "/api/jobs", body={"video_id": "abc", "folder": "../fuera"}
+    )
+    assert refused.status == 400
+    error = json.loads(payload)["error"]
+    assert error["code"] == "INVALID_FOLDER"
+    # The user must read the real reason, not a generic "petición no válida".
+    assert "carpeta" in error["message"]
+
+    empty, payload = request(api, "POST", "/api/drive/folders", body={"name": "  "})
+    assert empty.status == 400
+    assert json.loads(payload)["error"]["code"] == "INVALID_FOLDER"
+
+
+def test_creating_a_drive_folder_returns_the_updated_list(api):
+    created, payload = request(api, "POST", "/api/drive/folders", body={"name": "Catalán"})
+
+    assert created.status == 200
+    body = json.loads(payload)
+    assert body["created"] == "Catalán"
+    assert body["folders"][-1] == "Catalán"
 
 
 def test_explicit_token_must_be_long_enough():
