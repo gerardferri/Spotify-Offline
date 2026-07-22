@@ -78,13 +78,25 @@
   </nav>
 
   <footer class="player" id="player" hidden>
-    <div class="now-playing"><strong id="playerTitle"></strong><small id="playerArtist"></small></div>
-    <div class="player-controls" aria-label="Controles de reproducción">
-      <button class="player-control" id="playerPrevious" aria-label="Canción anterior">↶</button>
-      <button class="art-button" id="playerPlay" aria-label="Reproducir">▶</button>
-      <button class="player-control" id="playerNext" aria-label="Siguiente canción">↷</button>
+    <div class="player-track">
+      <div class="player-cover" id="playerCover" aria-hidden="true">♫</div>
+      <div class="now-playing"><strong id="playerTitle"></strong><small id="playerArtist"></small></div>
     </div>
-    <div class="progress-row"><span id="elapsed">0:00</span><input id="progress" type="range" min="0" max="0" value="0" aria-label="Progreso"><span id="duration">0:00</span></div>
+    <div class="player-main">
+      <div class="player-controls" aria-label="Controles de reproducción">
+        <button class="player-control player-toggle" id="playerShuffle" type="button" aria-label="Activar reproducción aleatoria" aria-pressed="false" title="Aleatorio">⇄</button>
+        <button class="player-control" id="playerPrevious" type="button" aria-label="Canción anterior" title="Anterior">▌◀</button>
+        <button class="art-button" id="playerPlay" type="button" aria-label="Reproducir" title="Reproducir">▶</button>
+        <button class="player-control" id="playerNext" type="button" aria-label="Siguiente canción" title="Siguiente">▶▌</button>
+        <button class="player-control player-toggle repeat-control" id="playerRepeat" type="button" aria-label="Activar repetición" aria-pressed="false" data-mode="off" title="Repetir">↻<span id="repeatCount" hidden>1</span></button>
+      </div>
+      <div class="progress-row">
+        <span id="elapsed">0:00</span>
+        <input id="progress" type="range" min="0" max="0" value="0" step="0.1" aria-label="Posición de reproducción">
+        <span id="duration">0:00</span>
+      </div>
+    </div>
+    <div class="player-balance" aria-hidden="true"></div>
   </footer>
   <audio id="audio" preload="metadata"></audio>
   <dialog id="trackMenu"><form method="dialog" class="menu"><h2 id="menuTrackTitle">Canción</h2><button value="favorite" id="favoriteAction">Añadir a favoritos</button><label>Añadir a playlist<select id="playlistSelect"></select><button type="button" id="addToPlaylist">Añadir</button></label><button value="delete" class="danger">Eliminar de este iPhone</button><button value="cancel">Cancelar</button></form></dialog>

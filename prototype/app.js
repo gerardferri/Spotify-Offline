@@ -2,7 +2,8 @@
 const DB_NAME = 'ytmp3-studio-pwa'; const DB_VERSION = 1;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-let db, tracks = [], activeTrack, currentUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer;
+let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer;
+let shuffleEnabled = false, repeatMode = 'off';
 const audio = $('#audio');
 
 function openDb() { return new Promise((resolve, reject) => { const request = indexedDB.open(DB_NAME, DB_VERSION); request.onupgradeneeded = () => { const database = request.result; const trackStore = database.createObjectStore('tracks', { keyPath: 'id' }); trackStore.createIndex('fingerprint', 'fingerprint', { unique: true }); trackStore.createIndex('createdAt', 'createdAt'); database.createObjectStore('playlists', { keyPath: 'id' }); const links = database.createObjectStore('playlistTracks', { keyPath: ['playlistId', 'trackId'] }); links.createIndex('playlistId', 'playlistId'); database.createObjectStore('settings', { keyPath: 'key' }); }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
@@ -28,20 +29,128 @@ function cover(track) { if (!track.cover) return '♫'; const url = URL.createOb
 function filteredTracks() { const query = $('#libraryFilter').value.trim().toLocaleLowerCase('es'); return tracks.filter(track => !query || `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase('es').includes(query)); }
 function renderTracks() { coverUrls.forEach(URL.revokeObjectURL); coverUrls = []; const list = $('#trackList'), visible = filteredTracks(); $('#emptyState').hidden = tracks.length !== 0; $('#librarySummary').textContent = tracks.length ? `${tracks.length} pista${tracks.length === 1 ? '' : 's'} guardada${tracks.length === 1 ? '' : 's'} para escuchar sin conexión.` : 'Importa tus archivos de audio para empezar.'; list.innerHTML = visible.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">${cover(track)}</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}${track.album ? ` · ${escape(track.album)}` : ''}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="menu-track" data-id="${track.id}" aria-label="Opciones">⋯</button></div></article>`).join(''); $$('.play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $$('.menu-track').forEach(button => button.onclick = () => openMenu(button.dataset.id)); }
 async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); $('#emptyPlaylists').hidden = playlists.length !== 0; $('#playlistList').innerHTML = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${count} canción${count === 1 ? '' : 'es'}</small></span></button>`; }).join(''); $$('.playlist').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); }
-async function play(trackId) { const track = tracks.find(item => item.id === trackId); if (!track) return; if (activeTrack?.id === trackId) { audio.paused ? audio.play() : audio.pause(); return; } if (currentUrl) URL.revokeObjectURL(currentUrl); activeTrack = track; currentUrl = URL.createObjectURL(track.blob); audio.src = currentUrl; audio.play().catch(() => showToast('Toca reproducir para iniciar el audio.')); $('#player').hidden = false; $('#playerTitle').textContent = track.title; $('#playerArtist').textContent = track.artist; document.title = `${track.title} · YT-MP3 Studio`; updateMediaSession(); }
-function updateMediaSession() { if (!('mediaSession' in navigator) || !activeTrack) return; navigator.mediaSession.metadata = new MediaMetadata({ title: activeTrack.title, artist: activeTrack.artist, album: activeTrack.album || 'YT-MP3 Studio' }); navigator.mediaSession.setActionHandler('play', () => audio.play()); navigator.mediaSession.setActionHandler('pause', () => audio.pause()); navigator.mediaSession.setActionHandler('nexttrack', next); navigator.mediaSession.setActionHandler('previoustrack', previous); }
-function next() { if (!activeTrack || !tracks.length) return; const index = tracks.findIndex(track => track.id === activeTrack.id); play(tracks[(index + 1) % tracks.length].id); }
-function previous() { if (!activeTrack || !tracks.length) return; const index = tracks.findIndex(track => track.id === activeTrack.id); play(tracks[(index - 1 + tracks.length) % tracks.length].id); }
+async function play(trackId) {
+  const track = tracks.find(item => item.id === trackId);
+  if (!track) return;
+  if (activeTrack?.id === trackId) {
+    audio.paused ? audio.play() : audio.pause();
+    return;
+  }
+  if (currentUrl) URL.revokeObjectURL(currentUrl);
+  if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl);
+  activeTrack = track;
+  currentUrl = URL.createObjectURL(track.blob);
+  playerCoverUrl = track.cover ? URL.createObjectURL(track.cover) : null;
+  audio.src = currentUrl;
+  $('#player').hidden = false;
+  $('#playerTitle').textContent = track.title;
+  $('#playerArtist').textContent = track.artist;
+  $('#playerCover').innerHTML = playerCoverUrl ? `<img src="${playerCoverUrl}" alt="">` : '♫';
+  document.title = `${track.title} · YT-MP3 Studio`;
+  updateMediaSession();
+  audio.play().catch(() => showToast('Toca reproducir para iniciar el audio.'));
+}
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator) || !activeTrack) return;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: activeTrack.title, artist: activeTrack.artist, album: activeTrack.album || 'YT-MP3 Studio' });
+  navigator.mediaSession.setActionHandler('play', () => audio.play());
+  navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+  navigator.mediaSession.setActionHandler('nexttrack', () => next());
+  navigator.mediaSession.setActionHandler('previoustrack', previous);
+  navigator.mediaSession.setActionHandler('seekbackward', details => seekBy(-(details.seekOffset || 10)));
+  navigator.mediaSession.setActionHandler('seekforward', details => seekBy(details.seekOffset || 10));
+  navigator.mediaSession.setActionHandler('seekto', details => seekTo(details.seekTime));
+}
+
+function randomTrack() {
+  if (tracks.length < 2) return tracks[0];
+  const candidates = tracks.filter(track => track.id !== activeTrack?.id);
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function next(fromEnded = false) {
+  if (!activeTrack || !tracks.length) return;
+  if (fromEnded && repeatMode === 'one') {
+    audio.currentTime = 0;
+    audio.play();
+    return;
+  }
+  if (shuffleEnabled) {
+    play(randomTrack().id);
+    return;
+  }
+  const index = tracks.findIndex(track => track.id === activeTrack.id);
+  const atEnd = index === tracks.length - 1;
+  if (fromEnded && atEnd && repeatMode === 'off') {
+    audio.currentTime = 0;
+    updateProgress();
+    return;
+  }
+  play(tracks[(index + 1) % tracks.length].id);
+}
+
+function previous() {
+  if (!activeTrack || !tracks.length) return;
+  if (audio.currentTime > 3) {
+    seekTo(0);
+    return;
+  }
+  if (shuffleEnabled) {
+    play(randomTrack().id);
+    return;
+  }
+  const index = tracks.findIndex(track => track.id === activeTrack.id);
+  play(tracks[(index - 1 + tracks.length) % tracks.length].id);
+}
+
+function seekTo(seconds) {
+  if (!Number.isFinite(seconds)) return;
+  audio.currentTime = Math.max(0, Math.min(seconds, audio.duration || 0));
+  updateProgress();
+}
+
+function seekBy(seconds) { seekTo(audio.currentTime + seconds); }
+
+function updateProgress() {
+  const progress = $('#progress');
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  if (!progress.matches(':active')) progress.value = audio.currentTime;
+  progress.style.setProperty('--progress', duration ? `${(audio.currentTime / duration) * 100}%` : '0%');
+  $('#elapsed').textContent = time(audio.currentTime);
+  $('#duration').textContent = time(duration);
+}
+
+function toggleShuffle() {
+  shuffleEnabled = !shuffleEnabled;
+  const button = $('#playerShuffle');
+  button.classList.toggle('is-active', shuffleEnabled);
+  button.setAttribute('aria-pressed', String(shuffleEnabled));
+  button.setAttribute('aria-label', shuffleEnabled ? 'Desactivar reproducción aleatoria' : 'Activar reproducción aleatoria');
+  button.title = shuffleEnabled ? 'Aleatorio activado' : 'Aleatorio';
+}
+
+function toggleRepeat() {
+  repeatMode = repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off';
+  const button = $('#playerRepeat');
+  const enabled = repeatMode !== 'off';
+  button.dataset.mode = repeatMode;
+  button.classList.toggle('is-active', enabled);
+  button.setAttribute('aria-pressed', String(enabled));
+  button.setAttribute('aria-label', repeatMode === 'one' ? 'Repetir esta canción' : enabled ? 'Repetir todas las canciones' : 'Activar repetición');
+  button.title = repeatMode === 'one' ? 'Repetir una' : enabled ? 'Repetir todo' : 'Repetir';
+  $('#repeatCount').hidden = repeatMode !== 'one';
+}
 async function openMenu(trackId) { selectedTrack = tracks.find(track => track.id === trackId); if (!selectedTrack) return; $('#menuTrackTitle').textContent = selectedTrack.title; $('#favoriteAction').textContent = selectedTrack.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'; const playlists = await all('playlists'); $('#playlistSelect').innerHTML = playlists.length ? playlists.map(item => `<option value="${item.id}">${escape(item.name)}</option>`).join('') : '<option value="">Crea primero una playlist</option>'; $('#addToPlaylist').disabled = !playlists.length; $('#trackMenu').showModal(); }
 async function addToPlaylist() { const playlistId = $('#playlistSelect').value; if (!playlistId || !selectedTrack) return; await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId: selectedTrack.id, addedAt: new Date().toISOString() })); $('#trackMenu').close(); await renderPlaylists(); showToast('Añadida a la playlist.'); }
 async function toggleFavorite() { if (!selectedTrack) return; selectedTrack.favorite = !selectedTrack.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(selectedTrack)); $('#trackMenu').close(); await refresh(); }
-async function deleteTrack() { if (!selectedTrack || !confirm(`¿Eliminar “${selectedTrack.title}” de este iPhone?`)) return; const transaction = db.transaction(['tracks', 'playlistTracks'], 'readwrite'); transaction.objectStore('tracks').delete(selectedTrack.id); const links = await requestAsPromise(transaction.objectStore('playlistTracks').getAll()); links.filter(link => link.trackId === selectedTrack.id).forEach(link => transaction.objectStore('playlistTracks').delete([link.playlistId, link.trackId])); await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); $('#trackMenu').close(); if (activeTrack?.id === selectedTrack.id) { audio.pause(); $('#player').hidden = true; activeTrack = null; } await refresh(); showToast('Pista eliminada.'); }
+async function deleteTrack() { if (!selectedTrack || !confirm(`¿Eliminar “${selectedTrack.title}” de este iPhone?`)) return; const transaction = db.transaction(['tracks', 'playlistTracks'], 'readwrite'); transaction.objectStore('tracks').delete(selectedTrack.id); const links = await requestAsPromise(transaction.objectStore('playlistTracks').getAll()); links.filter(link => link.trackId === selectedTrack.id).forEach(link => transaction.objectStore('playlistTracks').delete([link.playlistId, link.trackId])); await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); $('#trackMenu').close(); if (activeTrack?.id === selectedTrack.id) { audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; activeTrack = null; document.title = 'YT-MP3 Studio · Biblioteca offline'; } await refresh(); showToast('Pista eliminada.'); }
 async function openPlaylist(playlistId) { const playlists = await all('playlists'); const playlist = playlists.find(item => item.id === playlistId); const links = await all('playlistTracks'); const list = links.filter(link => link.playlistId === playlistId).map(link => tracks.find(track => track.id === link.trackId)).filter(Boolean); $('#playlistDialogTitle').textContent = playlist.name; $('#playlistTracks').innerHTML = list.length ? list.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">♫</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}</small></div><button class="play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">▶</button></article>`).join('') : '<p class="empty-state compact">Esta playlist está vacía.</p>'; $$('#playlistTracks .play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $('#playlistDialog').showModal(); }
 async function createPlaylist(event) { event.preventDefault(); const name = $('#playlistName').value.trim(); if (!name) return; await requestAsPromise(tx('playlists', 'readwrite').put({ id: id(), name, createdAt: new Date().toISOString() })); event.target.reset(); await renderPlaylists(); showToast('Playlist creada.'); }
 async function exportBackup() { const library = await all('tracks'), playlists = await all('playlists'), links = await all('playlistTracks'); const backup = { version: 1, exportedAt: new Date().toISOString(), tracks: library.map(({ blob, cover, ...track }) => track), playlists, playlistTracks: links.map(link => ({ playlistId: link.playlistId, fingerprint: library.find(track => track.id === link.trackId)?.fingerprint })).filter(link => link.fingerprint) }; const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })); const link = Object.assign(document.createElement('a'), { href: url, download: `ytmp3-studio-backup-${new Date().toISOString().slice(0,10)}.json` }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); showToast('Copia exportada. Los audios no se incluyen.'); }
 async function restoreBackup(file) { try { const backup = JSON.parse(await file.text()); if (backup.version !== 1 || !Array.isArray(backup.playlists)) throw new Error('Formato no válido'); const current = await all('tracks'); const byFingerprint = new Map(current.map(track => [track.fingerprint, track.id])); const playlistById = new Map(); for (const playlist of backup.playlists) { const newId = id(); playlistById.set(playlist.id, newId); await requestAsPromise(tx('playlists', 'readwrite').put({ id: newId, name: playlist.name, createdAt: playlist.createdAt || new Date().toISOString() })); } let matched = 0; for (const link of backup.playlistTracks || []) { const trackId = byFingerprint.get(link.fingerprint), playlistId = playlistById.get(link.playlistId); if (trackId && playlistId) { await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId, addedAt: new Date().toISOString() })); matched++; } } for (const saved of backup.tracks || []) { const existing = current.find(track => track.fingerprint === saved.fingerprint); if (existing && typeof saved.favorite === 'boolean') { existing.favorite = saved.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(existing)); } } await refresh(); showToast(`Copia restaurada: ${matched} pistas asociadas.`); } catch (error) { showToast('No se pudo leer esa copia de seguridad.'); console.error(error); } finally { $('#restoreInput').value = ''; } }
 async function updateStorage() { const ownBytes = tracks.reduce((total, track) => total + (track.size || 0), 0); let suffix = `Música guardada: ${formatBytes(ownBytes)}.`; if (navigator.storage?.estimate) { const estimate = await navigator.storage.estimate(); suffix += ` Espacio del sitio: ${formatBytes(estimate.usage)} de ${formatBytes(estimate.quota)}.`; } $('#storageUsage').textContent = suffix; }
-async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este iPhone? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); $('#player').hidden = true; await refresh(); showToast('Biblioteca borrada.'); }
+async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este iPhone? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
 
 function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function isLocalDesktopApp() { return ['localhost', '127.0.0.1'].includes(location.hostname); }
@@ -57,6 +166,48 @@ async function loadJobs() { const config = await serverConfig(); if (!config.url
 function renderJobs(jobs) { $('#jobsEmpty').hidden = jobs.length !== 0; $('#jobList').innerHTML = jobs.map(job => { const progress = Math.max(0, Math.min(100, Number(job.progress_percent || (job.state === 'completed' ? 100 : 0)))); const action = job.state === 'completed' && job.track_id ? `<button class="primary save-remote" data-track-id="${job.track_id}" data-title="${escape(job.title)}">Guardar en iPhone</button>` : ''; return `<article class="remote-job"><div class="job-head"><div><strong>${escape(job.title || 'Descarga')}</strong><small>${escape(job.channel || '')}</small></div><span class="job-state state-${escape(job.state)}">${jobLabels[job.state] || escape(job.state)}</span></div><div class="job-progress"><i style="width:${progress}%"></i></div>${job.error_message ? `<p class="job-error">${escape(job.error_message)}</p>` : ''}${action}</article>`; }).join(''); $$('.save-remote').forEach(button => button.onclick = () => saveRemoteTrack(button)); }
 async function saveRemoteTrack(button) { button.disabled = true; button.textContent = 'Copiando…'; try { const response = await api(`/api/tracks/${encodeURIComponent(button.dataset.trackId)}/audio`); const blob = await response.blob(); const safeTitle = (button.dataset.title || 'cancion').replace(/[\\/:*?"<>|]/g, '_'); const file = new File([blob], `${safeTitle}.mp3`, { type: blob.type || 'audio/mpeg' }); await importFiles([file]); button.textContent = 'Guardada'; navigate('library'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; } }
 
-function bind() { $$('.nav-item').forEach(button => button.onclick = () => navigate(button.dataset.page)); $('#importButton').onclick = () => $('#fileInput').click(); $('#emptyImportButton').onclick = $('#emptyImportButton2').onclick = () => $('#fileInput').click(); $('#fileInput').onchange = event => importFiles(event.target.files); $('#libraryFilter').oninput = renderTracks; $('#sortButton').onclick = () => { sortNewest = !sortNewest; $('#sortButton').textContent = sortNewest ? 'Recientes' : 'A–Z'; $('#sortButton').setAttribute('aria-pressed', String(sortNewest)); refresh(); }; $('#newPlaylistForm').onsubmit = createPlaylist; $('#backupButton').onclick = exportBackup; $('#restoreInput').onchange = event => event.target.files[0] && restoreBackup(event.target.files[0]); $('#addToPlaylist').onclick = addToPlaylist; $('#trackMenu').addEventListener('close', () => { const value = $('#trackMenu').returnValue; if (value === 'favorite') toggleFavorite(); if (value === 'delete') deleteTrack(); }); $('#playerPlay').onclick = () => audio.paused ? audio.play() : audio.pause(); $('#playerPrevious').onclick = previous; $('#playerNext').onclick = next; $('#progress').oninput = event => { audio.currentTime = Number(event.target.value); $('#elapsed').textContent = time(audio.currentTime); }; audio.onplay = () => { $('#playerPlay').textContent = '❚❚'; $('#playerPlay').setAttribute('aria-label', 'Pausar'); }; audio.onpause = () => { $('#playerPlay').textContent = '▶'; $('#playerPlay').setAttribute('aria-label', 'Reproducir'); }; audio.ontimeupdate = () => { const progress = $('#progress'), duration = audio.duration || 0; progress.value = audio.currentTime; progress.style.setProperty('--progress', duration ? `${(audio.currentTime / duration) * 100}%` : '0%'); $('#elapsed').textContent = time(audio.currentTime); if ('mediaSession' in navigator && audio.duration) navigator.mediaSession.setPositionState({ duration: audio.duration, position: audio.currentTime }); }; audio.onloadedmetadata = () => { const progress = $('#progress'); progress.max = audio.duration || 0; progress.value = 0; progress.style.setProperty('--progress', '0%'); $('#duration').textContent = time(audio.duration); }; audio.onended = next; $('#remoteSearchForm').onsubmit = searchRemote; $('#refreshJobs').onclick = loadJobs; $('#openServerSettings').onclick = () => navigate('settings'); $('#saveServer').onclick = saveServerConfig; $('#toggleToken').onclick = () => { const input = $('#serverToken'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggleToken').textContent = input.type === 'password' ? 'Mostrar clave' : 'Ocultar clave'; }; $('#requestPersistence').onclick = async () => { const granted = await navigator.storage?.persist?.(); showToast(granted ? 'Safari protegerá los datos cuando sea posible.' : 'Safari no pudo garantizar el almacenamiento.'); }; $('#clearLibrary').onclick = clearLibrary; }
+function bind() {
+  $$('.nav-item').forEach(button => button.onclick = () => navigate(button.dataset.page));
+  $('#importButton').onclick = () => $('#fileInput').click();
+  $('#emptyImportButton').onclick = $('#emptyImportButton2').onclick = () => $('#fileInput').click();
+  $('#fileInput').onchange = event => importFiles(event.target.files);
+  $('#libraryFilter').oninput = renderTracks;
+  $('#sortButton').onclick = () => { sortNewest = !sortNewest; $('#sortButton').textContent = sortNewest ? 'Recientes' : 'A–Z'; $('#sortButton').setAttribute('aria-pressed', String(sortNewest)); refresh(); };
+  $('#newPlaylistForm').onsubmit = createPlaylist;
+  $('#backupButton').onclick = exportBackup;
+  $('#restoreInput').onchange = event => event.target.files[0] && restoreBackup(event.target.files[0]);
+  $('#addToPlaylist').onclick = addToPlaylist;
+  $('#trackMenu').addEventListener('close', () => { const value = $('#trackMenu').returnValue; if (value === 'favorite') toggleFavorite(); if (value === 'delete') deleteTrack(); });
+
+  $('#playerPlay').onclick = () => audio.paused ? audio.play() : audio.pause();
+  $('#playerPrevious').onclick = previous;
+  $('#playerNext').onclick = () => next();
+  $('#playerShuffle').onclick = toggleShuffle;
+  $('#playerRepeat').onclick = toggleRepeat;
+  $('#progress').oninput = event => seekTo(Number(event.target.value));
+  $('#player').onkeydown = event => {
+    if (event.target.matches('input, button')) return;
+    if (event.code === 'Space') { event.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
+    if (event.code === 'ArrowLeft') { event.preventDefault(); seekBy(-5); }
+    if (event.code === 'ArrowRight') { event.preventDefault(); seekBy(5); }
+  };
+
+  audio.onplay = () => { $('#playerPlay').textContent = '❚❚'; $('#playerPlay').setAttribute('aria-label', 'Pausar'); $('#playerPlay').title = 'Pausar'; };
+  audio.onpause = () => { $('#playerPlay').textContent = '▶'; $('#playerPlay').setAttribute('aria-label', 'Reproducir'); $('#playerPlay').title = 'Reproducir'; };
+  audio.ontimeupdate = () => {
+    updateProgress();
+    if ('mediaSession' in navigator && Number.isFinite(audio.duration) && audio.duration > 0) navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: Math.min(audio.currentTime, audio.duration) });
+  };
+  audio.onloadedmetadata = () => { const progress = $('#progress'); progress.max = audio.duration || 0; progress.value = 0; updateProgress(); };
+  audio.onended = () => next(true);
+
+  $('#remoteSearchForm').onsubmit = searchRemote;
+  $('#refreshJobs').onclick = loadJobs;
+  $('#openServerSettings').onclick = () => navigate('settings');
+  $('#saveServer').onclick = saveServerConfig;
+  $('#toggleToken').onclick = () => { const input = $('#serverToken'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggleToken').textContent = input.type === 'password' ? 'Mostrar clave' : 'Ocultar clave'; };
+  $('#requestPersistence').onclick = async () => { const granted = await navigator.storage?.persist?.(); showToast(granted ? 'Safari protegerá los datos cuando sea posible.' : 'Safari no pudo garantizar el almacenamiento.'); };
+  $('#clearLibrary').onclick = clearLibrary;
+}
 async function init() { db = await openDb(); bind(); await refresh(); $('#serverUrl').value = isLocalDesktopApp() ? location.origin : await getSetting('serverUrl'); $('#serverToken').value = await getSetting('serverToken'); await updateServerBanner(false); jobsTimer = setInterval(() => { if ($('#page-downloads').classList.contains('is-visible') && !document.hidden) loadJobs(); }, 4000); if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error); }
 init().catch(error => { console.error(error); showToast('No se pudo abrir la biblioteca local.'); });
