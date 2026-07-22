@@ -45,6 +45,12 @@ Puedes usar YT-MP3 Studio en el navegador sin instalar ni abrir el archivo `.exe
 
 La web usa el mismo motor de búsqueda, cola, descargas y biblioteca que la aplicación Windows. El servidor se limita a `127.0.0.1`, así que solo es accesible desde ese mismo PC: no se abre ningún puerto del router ni se publica tu biblioteca en GitHub. Requiere el repositorio y Python/dependencias instalados (por ejemplo, la carpeta `.venv` de desarrollo).
 
+### Usar la web desde el iPhone en la misma WiFi
+
+Si quieres abrir la misma web desde el iPhone (u otro dispositivo) sin salir de tu red doméstica, usa `ABRIR-YT-MP3-STUDIO-WIFI.cmd` en lugar del anterior. Al arrancar, la consola muestra una dirección del tipo `http://192.168.1.x:8766`; ábrela en Safari desde el iPhone conectado a la misma WiFi. No pide clave.
+
+Este modo hace visible el servidor a **cualquier dispositivo de tu red doméstica**, no solo al iPhone: no lo actives en WiFis compartidas con desconocidos (por ejemplo, redes de invitados o lugares públicos). Sigue sin abrir ningún puerto del router.
+
 ## iPhone: PWA y Google Drive
 
 La carpeta `prototype/` contiene una PWA instalable desde Safari. La aplicación de Windows busca, descarga y convierte contenido autorizado. La web puede vincular Google Drive desde el PC, convertir las subcarpetas de `YT-MP3 Studio` en playlists y copiar al iPhone las canciones elegidas para reproducirlas sin conexión.
@@ -57,10 +63,10 @@ Para instalar la PWA:
 
 ### Sincronizar la música con Google Drive
 
-La integración utiliza OAuth: Google gestiona el inicio de sesión y YT-MP3 Studio nunca conoce la contraseña. La conexión se realiza desde el PC y la PWA no recibe los tokens de Google.
+La aplicación detecta Google Drive para ordenador y lee su carpeta local sincronizada. No necesita credenciales de desarrollador, OAuth ni una API de pago. Consulta [GOOGLE_DRIVE_SETUP.md](GOOGLE_DRIVE_SETUP.md).
 
-1. Prepara una aplicación OAuth personal siguiendo [GOOGLE_DRIVE_SETUP.md](GOOGLE_DRIVE_SETUP.md).
-2. Abre la web local y pulsa **Biblioteca > Conectar Google Drive**.
+1. Abre la web local y entra en **Biblioteca > Google Drive**.
+2. La primera sincronización crea o reutiliza `Mi unidad\YT-MP3 Studio`.
 3. Añade carpetas y canciones dentro de `YT-MP3 Studio` en Drive.
 4. La aplicación sincroniza al abrirse, periódicamente mientras está activa y al pulsar **Sincronizar**.
 5. Cada subcarpeta aparece como playlist. Abre una y pulsa **Guardar en iPhone** para conservar canciones offline.

@@ -27,7 +27,8 @@ CREATE TABLE drive_tracks (
     size_bytes          INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
     modified_time       TEXT,
     web_view_link       TEXT,
-    checksum            TEXT
+    checksum            TEXT,
+    local_path          TEXT
 );
 
 CREATE INDEX idx_drive_tracks_folder ON drive_tracks(folder_id, name COLLATE NOCASE);

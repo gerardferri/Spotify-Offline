@@ -15,13 +15,15 @@ from enum import Enum
 import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import logging
 import mimetypes
 from pathlib import Path
 import secrets
+import socket
 import sys
-from threading import Lock, Timer
+from threading import Lock, Thread, Timer
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 import webbrowser
@@ -36,10 +38,14 @@ from ytmp3studio.backend.google_drive_client import (
     GoogleDriveClient,
 )
 from ytmp3studio.backend.google_drive_service import GoogleDriveService
+from ytmp3studio.backend.local_drive_service import (
+    LocalGoogleDriveService,
+    detect_google_drive,
+)
 from ytmp3studio.backend.queue_service import QueueService
 from ytmp3studio.backend.search_service import SearchService
 from ytmp3studio.domain.errors import AppError, ErrorCode
-from ytmp3studio.domain.models import LibraryTrack
+from ytmp3studio.domain.models import LibraryTrack, default_download_dir
 from ytmp3studio.persistence.database import Database
 from ytmp3studio.persistence.drive_repository import DriveRepository
 from ytmp3studio.persistence.repositories import (
@@ -67,6 +73,7 @@ class MobileBackend:
         drive_redirect_uri: str = "http://127.0.0.1:8766/api/drive/callback",
         google_client_path: str | Path | None = None,
         drive_client: Any | None = None,
+        local_drive_service: LocalGoogleDriveService | None = None,
     ) -> None:
         self.database = Database(database_path or user_data_dir() / "ytmp3studio.db")
         self.database.migrate()
@@ -81,6 +88,11 @@ class MobileBackend:
             drive_redirect_uri,
         )
         self.drive_service = GoogleDriveService(self.drive_client, self.drive_client)
+        detected_drive = None if local_drive_service is not None else detect_google_drive()
+        self.local_drive_service = local_drive_service or (
+            LocalGoogleDriveService(detected_drive.music_root) if detected_drive else None
+        )
+        self._align_download_dir_with_drive()
         self.drive_repository = DriveRepository(self.database)
         self._drive_sync_lock = Lock()
         ffmpeg = FfmpegAdapter()
@@ -92,8 +104,42 @@ class MobileBackend:
             self.history,
             self.provider,
             self.settings.get,
+            on_completed=self._on_download_completed,
         )
         self.queue.start(recover=True)
+
+    def _align_download_dir_with_drive(self) -> None:
+        """Point finished MP3 files at the synced Drive folder, not at ~/Music."""
+
+        service = self.local_drive_service
+        if not (service and service.is_connected()):
+            return
+        try:
+            target = service.ensure_downloads_folder()
+        except OSError as exc:
+            logger.warning("No se pudo preparar la carpeta de descargas de Drive: %s", exc)
+            return
+        default_download = Path(default_download_dir())
+        current = Path(self.settings.get_value("download_dir", str(default_download)))
+        # Respect a folder the user chose deliberately; only migrate our own defaults.
+        if current in (default_download, service.music_root, target):
+            self.settings.set_value("download_dir", str(target))
+
+    def download_dir(self) -> str:
+        return str(Path(self.settings.get_value("download_dir", default_download_dir())))
+
+    def _on_download_completed(self, _job: Any, _track: LibraryTrack) -> None:
+        """Refresh the Drive catalog so the new song shows up as a playlist track."""
+
+        if not (self.local_drive_service and self.local_drive_service.is_connected()):
+            return
+        Thread(target=self._sync_drive_after_download, daemon=True).start()
+
+    def _sync_drive_after_download(self) -> None:
+        try:
+            self._sync_drive(None, "Google Drive para ordenador")
+        except Exception:  # noqa: BLE001 - background refresh must never kill the worker
+            logger.exception("No se pudo actualizar el catálogo de Drive tras la descarga.")
 
     def search(self, query: str, limit: int) -> list[dict[str, Any]]:
         return [_jsonable(result) for result in self.search_service.search(query, limit)]
@@ -115,19 +161,30 @@ class MobileBackend:
         return self.library.get(track_id)
 
     def drive_status(self) -> dict[str, Any]:
+        local_connected = bool(
+            self.local_drive_service and self.local_drive_service.is_connected()
+        )
         configured = bool(getattr(self.drive_client, "configured", True))
-        connected = configured and self.drive_client.is_connected()
+        connected = local_connected or (configured and self.drive_client.is_connected())
         status = self.drive_repository.status(connected=connected)
         status.update(
             {
-                "configured": configured,
+                "configured": local_connected or configured,
+                "mode": "desktop" if local_connected else "api",
+                "can_disconnect": not local_connected,
                 "syncing": self._drive_sync_lock.locked(),
-                "setup_required": None if configured else "google-client-secret.json",
+                "download_dir": self.download_dir(),
+                "downloads_folder_name": (
+                    self.local_drive_service.downloads_root.name if local_connected else None
+                ),
+                "setup_required": None if local_connected or configured else "google-client-secret.json",
             }
         )
         return status
 
     def drive_authorization_url(self) -> str:
+        if self.local_drive_service and self.local_drive_service.is_connected():
+            raise ValueError("Google Drive para ordenador ya está vinculado.")
         return self.drive_service.authorization_url()
 
     def complete_drive_authorization(self, code: str, state: str) -> dict[str, Any]:
@@ -138,6 +195,8 @@ class MobileBackend:
         return self._sync_drive(connection.account_email, connection.account_name)
 
     def sync_drive(self) -> dict[str, Any]:
+        if self.local_drive_service and self.local_drive_service.is_connected():
+            return self._sync_drive(None, "Google Drive para ordenador")
         if not self.drive_client.is_connected():
             raise ValueError("Conecta primero tu cuenta de Google Drive desde el PC.")
         connection = self.drive_service.connection_state()
@@ -147,7 +206,11 @@ class MobileBackend:
         if not self._drive_sync_lock.acquire(blocking=False):
             raise ValueError("Google Drive ya se está sincronizando.")
         try:
-            snapshot = self.drive_service.scan_library()
+            snapshot = (
+                self.local_drive_service.scan_library()
+                if self.local_drive_service and self.local_drive_service.is_connected()
+                else self.drive_service.scan_library()
+            )
             return self.drive_repository.replace_snapshot(
                 snapshot,
                 account_email=account_email,
@@ -160,6 +223,8 @@ class MobileBackend:
             self._drive_sync_lock.release()
 
     def disconnect_drive(self) -> dict[str, Any]:
+        if self.local_drive_service and self.local_drive_service.is_connected():
+            raise ValueError("La unidad está vinculada mediante Google Drive para ordenador.")
         self.drive_service.disconnect()
         self.drive_repository.clear()
         return self.drive_status()
@@ -168,8 +233,26 @@ class MobileBackend:
         return self.drive_repository.list_tracks(folder_id)
 
     def download_drive_track(self, file_id: str, range_header: str | None = None):
-        if not any(track["file_id"] == file_id for track in self.drive_repository.list_tracks()):
+        track = next(
+            (item for item in self.drive_repository.list_tracks() if item["file_id"] == file_id),
+            None,
+        )
+        if track is None:
             raise ValueError("La canción de Google Drive no existe en el catálogo.")
+        if track.get("local_path"):
+            path = Path(track["local_path"]).resolve()
+            root = self.local_drive_service.music_root.resolve() if self.local_drive_service else None
+            if root is None or not path.is_relative_to(root) or not path.is_file():
+                raise ValueError("La canción ya no está disponible en Google Drive.")
+            size = path.stat().st_size
+            start, end, partial = _parse_range(range_header, size)
+            with path.open("rb") as source:
+                source.seek(start)
+                data = source.read(end - start + 1)
+            headers = {"Content-Type": mimetypes.guess_type(path.name)[0] or "audio/mpeg"}
+            if partial:
+                headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+            return data, headers, HTTPStatus.PARTIAL_CONTENT if partial else HTTPStatus.OK
         return self.drive_client.download(file_id, range_header)
 
     def close(self) -> None:
@@ -333,18 +416,18 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _is_local_web_request(self) -> bool:
-        """Allow the locally served browser UI, never a remote web origin."""
+        """Allow the locally served browser UI (PC or same-WiFi phone), never a remote origin."""
         if not self.server.allow_local_web_without_token:
             return False
         host = self.headers.get("Host", "").lower()
-        expected_hosts = {
-            f"127.0.0.1:{self.server.server_port}",
-            f"localhost:{self.server.server_port}",
-        }
-        if host not in expected_hosts:
+        hostname, _, port_text = host.rpartition(":")
+        hostname = hostname or host
+        if port_text and port_text != str(self.server.server_port):
+            return False
+        if hostname not in {"127.0.0.1", "localhost"} and not _is_private_lan_host(hostname):
             return False
         origin = self.headers.get("Origin", "").rstrip("/")
-        return not origin or origin in {f"http://{value}" for value in expected_hosts}
+        return not origin or origin == f"http://{host}"
 
     def _origin_allowed(self) -> bool:
         origin = self.headers.get("Origin")
@@ -353,7 +436,12 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         normalized = origin.rstrip("/")
         if normalized in self.server.allowed_origins:
             return True
-        return normalized.startswith("http://localhost:") or normalized.startswith("http://127.0.0.1:")
+        if normalized.startswith("http://localhost:") or normalized.startswith("http://127.0.0.1:"):
+            return True
+        if self.server.allow_local_web_without_token and normalized.startswith("http://"):
+            hostname = normalized.removeprefix("http://").rsplit(":", 1)[0]
+            return _is_private_lan_host(hostname)
+        return False
 
     def _cors_headers(self) -> None:
         origin = self.headers.get("Origin")
@@ -482,6 +570,25 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         logger.info("mobile_api client=%s %s", self.client_address[0], format_string % args)
 
 
+def _is_private_lan_host(hostname: str) -> bool:
+    """True for RFC1918 addresses reachable only from the local network."""
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return address.is_private and not address.is_loopback and not address.is_link_local
+
+
+def _detect_lan_ip() -> str | None:
+    """Best-effort private IPv4 address of this machine, for display only."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
 def _parse_range(header: str | None, size: int) -> tuple[int, int, bool]:
     if not header:
         return 0, max(0, size - 1), False
@@ -533,6 +640,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database", type=Path, help="Base de datos alternativa para pruebas")
     parser.add_argument("--google-client", type=Path, help="Archivo OAuth de aplicación de escritorio descargado de Google Cloud")
     parser.add_argument("--web", action="store_true", help="Sirve la aplicaciÃ³n web local para usarla desde el PC")
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="Con --web, permite abrir la web desde otros dispositivos de tu misma WiFi sin clave",
+    )
     parser.add_argument("--open-browser", action="store_true", help="Abre la aplicaciÃ³n web en el navegador (requiere --web)")
     return parser
 
@@ -541,8 +653,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.open_browser and not args.web:
         raise SystemExit("--open-browser requiere --web")
-    if args.web and args.host not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit("--web solo se puede usar en una interfaz local (127.0.0.1, localhost o ::1)")
+    if args.lan and not args.web:
+        raise SystemExit("--lan requiere --web")
+    if args.lan and args.host == "127.0.0.1":
+        args.host = "0.0.0.0"
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"} | ({"0.0.0.0"} if args.lan else set())
+    if args.web and args.host not in allowed_hosts:
+        raise SystemExit("--web solo se puede usar en una interfaz local (127.0.0.1, localhost o ::1), o con --lan en 0.0.0.0")
     if args.web and not PWA_DIRECTORY.is_dir():
         raise SystemExit(f"No se ha encontrado la PWA en {PWA_DIRECTORY}")
     configure_logging()
@@ -561,12 +678,20 @@ def main(argv: list[str] | None = None) -> int:
         allow_local_web_without_token=args.web,
     )
     if args.web:
-        url = f"http://{args.host}:{server.server_port}"
+        local_url = f"http://127.0.0.1:{server.server_port}"
         print("YT-MP3 Studio web para PC")
-        print(f"AplicaciÃ³n web local: {url}")
-        print("Solo acepta conexiones de este PC; no abre puertos en el router.")
+        print(f"AplicaciÃ³n web local: {local_url}")
+        if args.lan:
+            lan_ip = _detect_lan_ip()
+            if lan_ip:
+                print(f"También accesible desde tu misma WiFi, sin clave: http://{lan_ip}:{server.server_port}")
+            else:
+                print("Modo WiFi activado, pero no se ha podido detectar la IP de esta red.")
+            print("Cualquier dispositivo en tu misma WiFi puede usar esta dirección sin clave.")
+        else:
+            print("Solo acepta conexiones de este PC; no abre puertos en el router.")
         if args.open_browser:
-            Timer(0.2, lambda: webbrowser.open(url)).start()
+            Timer(0.2, lambda: webbrowser.open(local_url)).start()
     else:
         print("YT-MP3 Studio para iPhone")
         print(f"Servidor local: http://{args.host}:{server.server_port}")

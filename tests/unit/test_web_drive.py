@@ -58,6 +58,7 @@ def test_drive_frontend_consumes_canonical_api_contract() -> None:
     assert "payload?.drive" in javascript
     assert "payload.authorization_url" in javascript
     assert "account_email" in javascript
+    assert "driveSnapshot.mode === 'desktop'" in javascript
     assert "google-client-secret.json" in javascript
     assert "last_sync_at" in javascript
     assert "track_count" in javascript

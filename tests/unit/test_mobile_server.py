@@ -8,7 +8,14 @@ from threading import Thread
 import pytest
 
 from ytmp3studio.domain.models import LibraryTrack
-from ytmp3studio.mobile_server import MobileApiServer, _parse_range, load_or_create_token
+from ytmp3studio.mobile_server import (
+    MobileApiServer,
+    _is_private_lan_host,
+    _parse_range,
+    build_parser,
+    load_or_create_token,
+    main,
+)
 
 
 TOKEN = "a-secure-personal-token-with-24-chars"
@@ -183,6 +190,35 @@ def test_explicit_token_must_be_long_enough():
         load_or_create_token("short")
 
 
+@pytest.mark.parametrize(
+    "hostname, expected",
+    [
+        ("192.168.1.50", True),
+        ("10.0.0.5", True),
+        ("172.20.4.9", True),
+        ("172.15.0.1", False),
+        ("172.32.0.1", False),
+        ("8.8.8.8", False),
+        ("127.0.0.1", False),
+        ("not-an-ip", False),
+        ("", False),
+    ],
+)
+def test_is_private_lan_host(hostname, expected):
+    assert _is_private_lan_host(hostname) is expected
+
+
+def test_lan_flag_without_web_is_rejected():
+    with pytest.raises(SystemExit):
+        main(["--lan"])
+
+
+def test_lan_flag_defaults_host_to_all_interfaces():
+    args = build_parser().parse_args(["--web", "--lan"])
+    assert args.lan is True
+    assert args.host == "127.0.0.1"  # main() promotes this to 0.0.0.0 when --lan is set
+
+
 def test_local_web_serves_pwa_and_allows_only_its_same_origin_without_token(tmp_path):
     audio_path = tmp_path / "test.mp3"
     audio_path.write_bytes(b"0123456789")
@@ -231,6 +267,85 @@ def test_local_web_serves_pwa_and_allows_only_its_same_origin_without_token(tmp_
             headers={"Host": "desktop.example.test"},
         )
         assert remote.status == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_lan_phone_reaches_local_web_without_a_token(tmp_path):
+    """Same-WiFi devices (e.g. an iPhone at a private IP) must be trusted like the PC itself."""
+    audio_path = tmp_path / "test.mp3"
+    audio_path.write_bytes(b"0123456789")
+    server = MobileApiServer(
+        ("127.0.0.1", 0),
+        FakeBackend(audio_path),
+        TOKEN,
+        {ORIGIN},
+        static_dir=PWA_DIRECTORY,
+        allow_local_web_without_token=True,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        lan_host = f"192.168.1.50:{server.server_port}"
+        health, payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Origin": f"http://{lan_host}", "Host": lan_host},
+        )
+        assert health.status == 200
+        assert json.loads(payload)["ok"] is True
+
+        mismatched_host = f"192.168.1.50:{server.server_port + 1}"
+        health, _payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Origin": f"http://{lan_host}", "Host": mismatched_host},
+        )
+        assert health.status == 401
+
+        public_host = f"8.8.8.8:{server.server_port}"
+        health, _payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Origin": f"http://{public_host}", "Host": public_host},
+        )
+        assert health.status == 403  # a public-IP origin is rejected by CORS before auth runs
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_lan_access_is_still_blocked_without_the_wifi_flag(tmp_path):
+    audio_path = tmp_path / "test.mp3"
+    audio_path.write_bytes(b"0123456789")
+    server = MobileApiServer(
+        ("127.0.0.1", 0),
+        FakeBackend(audio_path),
+        TOKEN,
+        {ORIGIN},
+        static_dir=PWA_DIRECTORY,
+        allow_local_web_without_token=False,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        health, _payload = request(
+            server.server_address,
+            "GET",
+            "/api/health",
+            token=None,
+            headers={"Host": f"192.168.1.50:{server.server_port}"},
+        )
+        assert health.status == 401
     finally:
         server.shutdown()
         server.server_close()

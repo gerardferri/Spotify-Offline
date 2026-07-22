@@ -78,6 +78,7 @@ class DriveTrack:
     modified_time: str | None = None
     web_view_link: str | None = None
     checksum: str | None = None
+    local_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

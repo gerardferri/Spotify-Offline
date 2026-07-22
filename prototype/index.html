@@ -17,27 +17,27 @@
   <main class="app-shell">
     <header class="app-header">
       <div class="brand"><span class="brand-mark">♫</span><span><strong>YT-MP3</strong><small>STUDIO · OFFLINE</small></span></div>
-      <div class="header-actions"><span class="desktop-badge">Biblioteca privada</span><button class="icon-button" id="importButton" aria-label="Importar música" title="Importar música">＋</button></div>
+      <div class="header-actions"><span class="desktop-badge">Biblioteca privada</span><button class="primary desktop-download" id="desktopDownload" type="button"><span class="download-arrow" aria-hidden="true"></span>Descargar música</button><button class="icon-button" id="importButton" aria-label="Importar música" title="Importar música">＋</button></div>
       <input id="fileInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg" multiple hidden>
     </header>
 
     <section class="page" id="page-search">
-      <div class="hero"><span class="eyebrow">DESCARGA EN TU PC</span><h1>Buscar música</h1><p>El PC busca y convierte el audio; después puedes guardarlo en este iPhone.</p></div>
+      <div class="hero"><span class="eyebrow">DESCARGA EN TU PC</span><h1>Descargar música</h1><p>Busca una canción, artista o enlace. El PC la descargará y la añadirá a tu biblioteca de Google Drive.</p></div>
       <div class="server-banner" id="serverBanner"><span class="status-dot"></span><p><strong id="serverStatus">Servidor sin configurar</strong><small id="serverHint">Introduce la dirección y la clave en Ajustes.</small></p><button class="secondary" id="openServerSettings">Configurar</button></div>
-      <form class="remote-search" id="remoteSearchForm"><label class="search"><span>⌕</span><input id="remoteQuery" type="search" placeholder="Canción, artista o URL de YouTube" required></label><button class="primary" type="submit">Buscar</button></form>
+      <form class="remote-search" id="remoteSearchForm"><label class="search"><span>⌕</span><input id="remoteQuery" type="search" placeholder="Canción, artista o URL de YouTube" required></label><button class="primary" type="submit">Buscar para descargar</button></form>
       <div class="search-results" id="searchResults"></div>
       <section class="empty-state compact" id="searchEmpty"><div>⌕</div><h2>Busca desde el iPhone</h2><p>Tu petición viajará cifrada al PC. Solo descarga contenido propio o para el que tengas permiso.</p></section>
     </section>
 
     <section class="page" id="page-downloads">
-      <div class="hero"><span class="eyebrow">TRABAJO DEL PC</span><h1>Descargas</h1><p>Consulta el progreso y copia los MP3 terminados a la biblioteca del iPhone.</p></div>
+      <div class="hero"><span class="eyebrow">TRABAJO DEL PC</span><h1>Descargas</h1><p>Consulta el progreso y copia los MP3 terminados a la biblioteca del iPhone.</p><p class="drive-download-path" id="jobsDownloadPath" hidden></p></div>
       <button class="secondary refresh-jobs" id="refreshJobs">Actualizar</button>
       <div class="job-list" id="jobList"></div>
       <section class="empty-state compact" id="jobsEmpty"><div>↓</div><h2>No hay descargas</h2><p>Busca una canción y envíala al PC para verla aquí.</p></section>
     </section>
 
     <section class="page is-visible" id="page-library">
-      <div class="hero"><span class="eyebrow">TU MÚSICA, EN ESTE IPHONE</span><h1>Biblioteca offline</h1><p id="librarySummary">Importa tus archivos de audio para empezar.</p></div>
+      <div class="hero"><span class="eyebrow">TU MÚSICA, EN ESTE IPHONE</span><h1>Biblioteca offline</h1><p id="librarySummary">Importa tus archivos de audio para empezar.</p><button class="primary hero-download" id="libraryDownload" type="button"><span class="download-arrow" aria-hidden="true"></span>Descargar música nueva</button></div>
       <section class="drive-hub" id="driveHub" data-state="loading" aria-labelledby="driveHubTitle" aria-busy="true">
         <header class="drive-hub-head">
           <div class="drive-brand"><span class="drive-mark" aria-hidden="true"><i></i><i></i><i></i></span><div><span class="eyebrow">BIBLIOTECA EN LA NUBE</span><h2 id="driveHubTitle">Google Drive</h2></div></div>
@@ -57,6 +57,7 @@
             <div class="drive-actions"><button class="secondary" id="driveSync" type="button">Sincronizar</button><button class="quiet-button" id="driveDisconnect" type="button">Desconectar</button></div>
           </div>
           <p class="drive-sync-meta"><span id="driveSyncSummary">Preparando biblioteca…</span><small id="driveLastSync">Todavía no se ha sincronizado.</small></p>
+          <p class="drive-download-path" id="driveDownloadPath" hidden></p>
           <div class="drive-folders-head"><strong>Carpetas sincronizadas</strong><span id="driveFolderTotal"></span></div>
           <div class="drive-folder-list" id="driveFolderList" aria-live="polite"></div>
           <div class="drive-folder-empty" id="driveFolderEmpty" hidden><span aria-hidden="true">♪</span><p><strong>No hay carpetas con música</strong><small>Añade canciones a la carpeta vinculada de Drive y pulsa Sincronizar.</small></p></div>
@@ -86,7 +87,7 @@
   </main>
 
   <nav class="bottom-nav" aria-label="Navegación principal">
-    <button class="nav-item" data-page="search"><span>⌕</span>Buscar</button>
+    <button class="nav-item" data-page="search"><span class="download-arrow" aria-hidden="true"></span>Descargar</button>
     <button class="nav-item" data-page="downloads"><span>↓</span>Descargas</button>
     <button class="nav-item is-active" data-page="library" aria-current="page"><span>♫</span>Biblioteca</button>
     <button class="nav-item" data-page="playlists"><span>≡</span>Playlists</button>

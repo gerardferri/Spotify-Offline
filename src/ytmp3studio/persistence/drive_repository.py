@@ -9,6 +9,9 @@ from ytmp3studio.backend.google_drive_service import DriveLibrarySnapshot
 from .database import Database, utc_now
 
 
+LOOSE_FOLDER_NAME = "Sin carpeta"
+
+
 class DriveRepository:
     """Atomically replace and query the Drive catalog without storing OAuth tokens."""
 
@@ -49,8 +52,8 @@ class DriveRepository:
                 """
                 INSERT INTO drive_tracks(
                     file_id, folder_id, name, mime_type, size_bytes,
-                    modified_time, web_view_link, checksum
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    modified_time, web_view_link, checksum, local_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -62,6 +65,7 @@ class DriveRepository:
                         track.modified_time,
                         track.web_view_link,
                         track.checksum,
+                        track.local_path,
                     )
                     for track in snapshot.tracks
                 ),
@@ -107,7 +111,36 @@ class DriveRepository:
                 ORDER BY CASEFOLD(f.name), f.file_id
                 """
             ).fetchall()
+            loose = connection.execute(
+                """
+                SELECT f.file_id, COUNT(t.file_id) AS track_count
+                FROM drive_folders f
+                LEFT JOIN drive_tracks t ON t.folder_id = f.file_id
+                WHERE f.parent_file_id IS NULL
+                GROUP BY f.file_id
+                """
+            ).fetchone()
             total = connection.execute("SELECT COUNT(*) FROM drive_tracks").fetchone()[0]
+        listed = [
+            {
+                "id": row["file_id"],
+                "name": row["name"],
+                "parent_id": row["parent_file_id"],
+                "track_count": int(row["track_count"]),
+            }
+            for row in folders
+        ]
+        # Tracks dropped straight into the linked folder still need a playlist.
+        if loose is not None and int(loose["track_count"]):
+            listed.insert(
+                0,
+                {
+                    "id": loose["file_id"],
+                    "name": LOOSE_FOLDER_NAME,
+                    "parent_id": None,
+                    "track_count": int(loose["track_count"]),
+                },
+            )
         return {
             "connected": bool(connected),
             "account_email": state["account_email"] if state else None,
@@ -117,15 +150,7 @@ class DriveRepository:
             "last_sync_at": state["last_synced_at"] if state else None,
             "revision": int(state["revision"]) if state else 0,
             "track_count": int(total),
-            "folders": [
-                {
-                    "id": row["file_id"],
-                    "name": row["name"],
-                    "parent_id": row["parent_file_id"],
-                    "track_count": int(row["track_count"]),
-                }
-                for row in folders
-            ],
+            "folders": listed,
             "error": state["last_error"] if state else None,
         }
 

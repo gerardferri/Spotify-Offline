@@ -4,6 +4,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer, driveTimer, driveSnapshot = null;
 let shuffleEnabled = false, repeatMode = 'off';
+const completedJobIds = new Set(); let jobsSeeded = false;
 const audio = $('#audio');
 
 function openDb() { return new Promise((resolve, reject) => { const request = indexedDB.open(DB_NAME, DB_VERSION); request.onupgradeneeded = () => { const database = request.result; const trackStore = database.createObjectStore('tracks', { keyPath: 'id' }); trackStore.createIndex('fingerprint', 'fingerprint', { unique: true }); trackStore.createIndex('createdAt', 'createdAt'); database.createObjectStore('playlists', { keyPath: 'id' }); const links = database.createObjectStore('playlistTracks', { keyPath: ['playlistId', 'trackId'] }); links.createIndex('playlistId', 'playlistId'); database.createObjectStore('settings', { keyPath: 'key' }); }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
@@ -153,7 +154,7 @@ async function updateStorage() { const ownBytes = tracks.reduce((total, track) =
 async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este iPhone? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
 
 function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-function isLocalDesktopApp() { return ['localhost', '127.0.0.1'].includes(location.hostname); }
+function isLocalDesktopApp() { const host = location.hostname; if (['localhost', '127.0.0.1'].includes(host)) return true; return /^(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)$/.test(host); }
 async function serverConfig() { if (isLocalDesktopApp()) return { url: location.origin, token: '' }; return { url: String(await getSetting('serverUrl')).replace(/\/+$/, ''), token: String(await getSetting('serverToken')) }; }
 async function api(path, options = {}) { const config = await serverConfig(); if (!config.url || (!config.token && !isLocalDesktopApp())) throw new Error('Configura primero la dirección y la clave del PC.'); if (!config.url.startsWith('https://') && !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(config.url)) throw new Error('El servidor necesita una dirección HTTPS.'); const response = await fetch(`${config.url}${path}`, { ...options, cache: 'no-store', headers: { ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}), ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } }); if (!response.ok) { let message = `El PC respondió con error ${response.status}.`; try { message = (await response.json()).error?.message || message; } catch {} throw new Error(message); } return response; }
 
@@ -222,20 +223,34 @@ async function saveDriveTrack(button) {
 }
 async function applyDrivePayload(payload) {
   const drive = payload?.drive || payload || {};
-  driveSnapshot = { connected: Boolean(drive.connected), configured: drive.configured !== false, account_email: drive.account_email || '', folder_name: drive.folder_name || 'YT-MP3 Studio', last_sync_at: drive.last_sync_at || null, syncing: Boolean(drive.syncing), folders: Array.isArray(drive.folders) ? drive.folders : [], track_count: Number(drive.track_count || 0), error: drive.error || null };
+  driveSnapshot = { connected: Boolean(drive.connected), configured: drive.configured !== false, mode: drive.mode || 'api', can_disconnect: drive.can_disconnect !== false, account_email: drive.account_email || '', account_name: drive.account_name || '', folder_name: drive.folder_name || 'YT-MP3 Studio', last_sync_at: drive.last_sync_at || null, syncing: Boolean(drive.syncing), folders: Array.isArray(drive.folders) ? drive.folders : [], track_count: Number(drive.track_count || 0), download_dir: drive.download_dir || '', downloads_folder_name: drive.downloads_folder_name || '', error: drive.error || null };
+  renderDownloadPath();
   if (driveSnapshot.error) { setDriveState('error', driveSnapshot.error); return; }
   if (!driveSnapshot.configured) { setDriveState('error', 'Falta preparar Google Drive en el PC. Añade google-client-secret.json siguiendo la guía de configuración y vuelve a intentarlo.'); renderDriveFolders([]); return; }
   if (!driveSnapshot.connected) { setDriveState('disconnected'); renderDriveFolders([]); await renderPlaylists(); return; }
   const email = driveSnapshot.account_email;
   $('#driveAvatar').textContent = (email || 'G').slice(0, 1).toUpperCase();
-  $('#driveAccountName').textContent = driveSnapshot.folder_name;
-  $('#driveAccountEmail').textContent = email || 'Google Drive conectado en el PC';
+  $('#driveAccountName').textContent = driveSnapshot.account_name || driveSnapshot.folder_name;
+  $('#driveAccountEmail').textContent = email || (driveSnapshot.mode === 'desktop' ? 'Google Drive para ordenador · carpeta sincronizada' : 'Google Drive conectado en el PC');
+  $('#driveDisconnect').hidden = !driveSnapshot.can_disconnect;
   $('#driveSyncSummary').textContent = `${driveSnapshot.track_count} canción${driveSnapshot.track_count === 1 ? '' : 'es'} en ${driveSnapshot.folders.length} carpeta${driveSnapshot.folders.length === 1 ? '' : 's'}`;
   $('#driveLastSync').textContent = formatDriveDate(driveSnapshot.last_sync_at);
   renderDriveFolders(driveSnapshot.folders);
   setDriveState(driveSnapshot.syncing ? 'syncing' : 'connected');
   if (driveSnapshot.syncing) setTimeout(() => loadDriveStatus({ quiet: true }), 2000);
   await renderPlaylists();
+}
+function renderDownloadPath() {
+  const targets = [$('#driveDownloadPath'), $('#jobsDownloadPath')];
+  const path = driveSnapshot?.download_dir || '';
+  const folder = driveSnapshot?.downloads_folder_name || '';
+  const inDrive = Boolean(driveSnapshot?.connected && driveSnapshot.mode === 'desktop' && folder);
+  const text = !path
+    ? ''
+    : inDrive
+      ? `Las canciones terminadas se guardan en Google Drive, dentro de “${folder}”: ${path}`
+      : `Las canciones terminadas se guardan en ${path}. Todavía no es una carpeta de Google Drive.`;
+  targets.forEach(element => { if (!element) return; element.textContent = text; element.hidden = !text; element.classList.toggle('is-warning', Boolean(text) && !inDrive); });
 }
 let driveRequestActive = false;
 async function loadDriveStatus({ quiet = false, autoSync = false } = {}) {
@@ -284,7 +299,8 @@ function renderSearchResults(results) { $('#searchEmpty').hidden = results.lengt
 async function enqueueRemote(button) { button.disabled = true; button.textContent = 'Enviando…'; try { await api('/api/jobs', { method: 'POST', body: JSON.stringify({ video_id: button.dataset.videoId, quality_kbps: 192 }) }); showToast('Descarga enviada al PC.'); navigate('downloads'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Descargar'; } }
 const jobLabels = { queued: 'En espera', resolving: 'Preparando', downloading: 'Descargando', converting: 'Convirtiendo', completed: 'Lista', failed: 'Error', interrupted: 'Interrumpida', paused: 'Pausada', cancelled: 'Cancelada' };
 async function loadJobs() { const config = await serverConfig(); if (!config.url || (!config.token && !isLocalDesktopApp())) { $('#jobList').innerHTML = '<p class="error-card">Configura el servidor en Ajustes.</p>'; $('#jobsEmpty').hidden = true; return; } try { const response = await api('/api/jobs'); const payload = await response.json(); renderJobs(payload.jobs || []); } catch (error) { $('#jobList').innerHTML = `<p class="error-card">${escape(error.message)}</p>`; $('#jobsEmpty').hidden = true; } }
-function renderJobs(jobs) { $('#jobsEmpty').hidden = jobs.length !== 0; $('#jobList').innerHTML = jobs.map(job => { const progress = Math.max(0, Math.min(100, Number(job.progress_percent || (job.state === 'completed' ? 100 : 0)))); const action = job.state === 'completed' && job.track_id ? `<button class="primary save-remote" data-track-id="${job.track_id}" data-title="${escape(job.title)}">Guardar en iPhone</button>` : ''; return `<article class="remote-job"><div class="job-head"><div><strong>${escape(job.title || 'Descarga')}</strong><small>${escape(job.channel || '')}</small></div><span class="job-state state-${escape(job.state)}">${jobLabels[job.state] || escape(job.state)}</span></div><div class="job-progress"><i style="width:${progress}%"></i></div>${job.error_message ? `<p class="job-error">${escape(job.error_message)}</p>` : ''}${action}</article>`; }).join(''); $$('.save-remote').forEach(button => button.onclick = () => saveRemoteTrack(button)); }
+function noticeCompletedJobs(jobs) { const finished = jobs.filter(job => job.state === 'completed').map(job => job.id); const fresh = finished.filter(jobId => !completedJobIds.has(jobId)); finished.forEach(jobId => completedJobIds.add(jobId)); if (!jobsSeeded) { jobsSeeded = true; return; } if (fresh.length && driveSnapshot?.connected) setTimeout(() => loadDriveStatus({ quiet: true }), 1500); }
+function renderJobs(jobs) { noticeCompletedJobs(jobs); $('#jobsEmpty').hidden = jobs.length !== 0; $('#jobList').innerHTML = jobs.map(job => { const progress = Math.max(0, Math.min(100, Number(job.progress_percent || (job.state === 'completed' ? 100 : 0)))); const action = job.state === 'completed' && job.track_id ? `<button class="primary save-remote" data-track-id="${job.track_id}" data-title="${escape(job.title)}">Guardar en iPhone</button>` : ''; return `<article class="remote-job"><div class="job-head"><div><strong>${escape(job.title || 'Descarga')}</strong><small>${escape(job.channel || '')}</small></div><span class="job-state state-${escape(job.state)}">${jobLabels[job.state] || escape(job.state)}</span></div><div class="job-progress"><i style="width:${progress}%"></i></div>${job.error_message ? `<p class="job-error">${escape(job.error_message)}</p>` : ''}${action}</article>`; }).join(''); $$('.save-remote').forEach(button => button.onclick = () => saveRemoteTrack(button)); }
 async function saveRemoteTrack(button) { button.disabled = true; button.textContent = 'Copiando…'; try { const response = await api(`/api/tracks/${encodeURIComponent(button.dataset.trackId)}/audio`); const blob = await response.blob(); const safeTitle = (button.dataset.title || 'cancion').replace(/[\\/:*?"<>|]/g, '_'); const file = new File([blob], `${safeTitle}.mp3`, { type: blob.type || 'audio/mpeg' }); await importFiles([file]); button.textContent = 'Guardada'; navigate('library'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; } }
 
 function syncPlayerClearance() {
@@ -297,6 +313,7 @@ function bind() {
   if ('ResizeObserver' in window) new ResizeObserver(syncPlayerClearance).observe($('.bottom-nav'));
   else window.addEventListener('resize', syncPlayerClearance);
   $$('.nav-item').forEach(button => button.onclick = () => navigate(button.dataset.page));
+  $('#desktopDownload').onclick = $('#libraryDownload').onclick = () => { navigate('search'); requestAnimationFrame(() => $('#remoteQuery').focus()); };
   $('#importButton').onclick = () => $('#fileInput').click();
   $('#emptyImportButton').onclick = $('#emptyImportButton2').onclick = () => $('#fileInput').click();
   $('#fileInput').onchange = event => importFiles(event.target.files);

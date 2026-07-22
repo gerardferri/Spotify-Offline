@@ -1,44 +1,45 @@
-# Conectar Google Drive
+# Google Drive para ordenador
 
-YT-MP3 Studio puede vincular una cuenta de Google desde la aplicación web que
-se ejecuta en el PC. La autorización y los tokens permanecen en el PC; el
-iPhone solo consulta el catálogo personal mediante el servidor de la app.
+YT-MP3 Studio detecta automáticamente una unidad ya vinculada mediante Google
+Drive para ordenador. No necesita OAuth, credenciales de desarrollador ni una
+API de pago.
 
-## Preparación en Google Cloud
+En este equipo la unidad detectada es:
 
-1. Crea o abre un proyecto en [Google Cloud Console](https://console.cloud.google.com/).
-2. Activa **Google Drive API** en **APIs y servicios > Biblioteca**.
-3. Configura la pantalla de consentimiento OAuth. Para uso personal puedes
-   mantenerla en pruebas y añadir tu propia cuenta como usuario de prueba.
-4. Declara los permisos `drive.readonly` y `drive.file`. El primero permite
-   detectar archivos que añades manualmente; el segundo permite crear la
-   carpeta dedicada cuando todavía no existe.
-5. Crea un cliente OAuth de tipo **Aplicación de escritorio** y descarga el
-   JSON de credenciales.
-6. Renómbralo como `google-client-secret.json` y guárdalo en:
+```text
+F:\Mi unidad\YT-MP3 Studio
+```
 
-   ```text
-   %LOCALAPPDATA%\YT-MP3 Studio\google-client-secret.json
-   ```
+La carpeta `YT-MP3 Studio` se crea al realizar la primera sincronización.
+Organiza dentro las canciones como quieras:
 
-No subas ese archivo al repositorio ni lo compartas.
+```text
+YT-MP3 Studio/
+├── Favoritas/
+├── Rock/
+└── Viajes/
+```
 
-## Primera conexión
+Cada subcarpeta aparecerá automáticamente como playlist.
+
+## Uso
 
 1. Abre `ABRIR-YT-MP3-STUDIO-WEB.cmd`.
-2. En **Biblioteca > Google Drive**, pulsa **Conectar Google Drive**.
-3. Completa la autorización en Google.
-4. La aplicación crea o reutiliza `YT-MP3 Studio`, recorre sus subcarpetas y
-   las muestra como playlists de Drive.
+2. Entra en **Biblioteca > Google Drive**.
+3. La aplicación detectará “Google Drive para ordenador” y sincronizará la
+   carpeta automáticamente.
+4. Abre una carpeta y pulsa **Guardar en iPhone** en las canciones que quieras
+   conservar offline.
 
 La web vuelve a sincronizar al abrirse, cada cinco minutos mientras permanece
 abierta y cuando pulsas **Sincronizar**. Los audios no se copian automáticamente
 al iPhone: abre una carpeta y pulsa **Guardar en iPhone** en las canciones que
 quieras conservar offline.
 
-## Privacidad y publicación
+La aplicación solo lee la carpeta musical mediante el disco virtual de Google.
+No recibe contraseñas ni tokens y no modifica otras carpetas de Drive. El PC y
+Google Drive para ordenador deben permanecer activos para recibir cambios.
 
-`drive.readonly` es un permiso restringido. El modo de pruebas sirve para una
-cuenta personal, pero Google puede exigir verificación antes de distribuir la
-aplicación públicamente. Desconectar Drive revoca la autorización local y borra
-el catálogo remoto del PC; nunca elimina las copias offline del iPhone.
+La integración OAuth incluida queda como alternativa para equipos sin Google
+Drive para ordenador. Esa modalidad sí requiere un proyecto de Google Cloud y
+puede necesitar verificación si se distribuye públicamente.
