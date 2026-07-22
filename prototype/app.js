@@ -2,7 +2,7 @@
 const DB_NAME = 'ytmp3-studio-pwa'; const DB_VERSION = 1;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer;
+let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer, driveTimer, driveSnapshot = null;
 let shuffleEnabled = false, repeatMode = 'off';
 const audio = $('#audio');
 
@@ -28,7 +28,7 @@ async function refresh() { tracks = await all('tracks'); tracks.sort((a, b) => s
 function cover(track) { if (!track.cover) return '♫'; const url = URL.createObjectURL(track.cover); coverUrls.push(url); return `<img src="${url}" alt="">`; }
 function filteredTracks() { const query = $('#libraryFilter').value.trim().toLocaleLowerCase('es'); return tracks.filter(track => !query || `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase('es').includes(query)); }
 function renderTracks() { coverUrls.forEach(URL.revokeObjectURL); coverUrls = []; const list = $('#trackList'), visible = filteredTracks(); $('#emptyState').hidden = tracks.length !== 0; $('#librarySummary').textContent = tracks.length ? `${tracks.length} pista${tracks.length === 1 ? '' : 's'} guardada${tracks.length === 1 ? '' : 's'} para escuchar sin conexión.` : 'Importa tus archivos de audio para empezar.'; list.innerHTML = visible.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">${cover(track)}</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}${track.album ? ` · ${escape(track.album)}` : ''}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="menu-track" data-id="${track.id}" aria-label="Opciones">⋯</button></div></article>`).join(''); $$('.play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $$('.menu-track').forEach(button => button.onclick = () => openMenu(button.dataset.id)); }
-async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); $('#emptyPlaylists').hidden = playlists.length !== 0; $('#playlistList').innerHTML = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${count} canción${count === 1 ? '' : 'es'}</small></span></button>`; }).join(''); $$('.playlist').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); }
+async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); const driveFolders = driveSnapshot?.connected ? driveSnapshot.folders || [] : []; $('#emptyPlaylists').hidden = playlists.length + driveFolders.length !== 0; const localMarkup = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${count} canción${count === 1 ? '' : 'es'}</small></span></button>`; }).join(''); const driveMarkup = driveFolders.map(folder => `<button class="playlist drive-playlist" data-drive-folder-id="${escape(folder.id)}"><span class="playlist-icon drive-playlist-icon">D</span><span><strong>${escape(folder.name)}</strong><small>${Number(folder.track_count || 0)} canción${Number(folder.track_count || 0) === 1 ? '' : 'es'} · Google Drive</small></span><span class="remote-pill">Nube</span></button>`).join(''); $('#playlistList').innerHTML = localMarkup + driveMarkup; $$('.playlist[data-id]').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); $$('.drive-playlist').forEach(button => button.onclick = () => focusDriveFolder(button.dataset.driveFolderId)); }
 async function play(trackId) {
   const track = tracks.find(item => item.id === trackId);
   if (!track) return;
@@ -152,10 +152,131 @@ async function restoreBackup(file) { try { const backup = JSON.parse(await file.
 async function updateStorage() { const ownBytes = tracks.reduce((total, track) => total + (track.size || 0), 0); let suffix = `Música guardada: ${formatBytes(ownBytes)}.`; if (navigator.storage?.estimate) { const estimate = await navigator.storage.estimate(); suffix += ` Espacio del sitio: ${formatBytes(estimate.usage)} de ${formatBytes(estimate.quota)}.`; } $('#storageUsage').textContent = suffix; }
 async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este iPhone? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
 
-function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function isLocalDesktopApp() { return ['localhost', '127.0.0.1'].includes(location.hostname); }
 async function serverConfig() { if (isLocalDesktopApp()) return { url: location.origin, token: '' }; return { url: String(await getSetting('serverUrl')).replace(/\/+$/, ''), token: String(await getSetting('serverToken')) }; }
 async function api(path, options = {}) { const config = await serverConfig(); if (!config.url || (!config.token && !isLocalDesktopApp())) throw new Error('Configura primero la dirección y la clave del PC.'); if (!config.url.startsWith('https://') && !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(config.url)) throw new Error('El servidor necesita una dirección HTTPS.'); const response = await fetch(`${config.url}${path}`, { ...options, cache: 'no-store', headers: { ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}), ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } }); if (!response.ok) { let message = `El PC respondió con error ${response.status}.`; try { message = (await response.json()).error?.message || message; } catch {} throw new Error(message); } return response; }
+
+function driveErrorHint(error) {
+  const message = String(error?.message || 'No se ha podido conectar con Google Drive.');
+  if (/configura primero|servidor/i.test(message)) return 'Conecta esta web con la aplicación del PC desde Ajustes. Google Drive se vincula y sincroniza de forma segura en el PC.';
+  if (/failed to fetch|load failed|network|conexión|connection/i.test(message)) return 'El PC no está disponible. Tu música guardada sigue funcionando offline; vuelve a intentarlo cuando el PC esté conectado.';
+  return message;
+}
+function setDriveState(state, message = '') {
+  const hub = $('#driveHub');
+  hub.dataset.state = state;
+  hub.setAttribute('aria-busy', String(state === 'loading' || state === 'connecting' || state === 'syncing'));
+  $('#driveLoading').hidden = !['loading', 'connecting', 'syncing'].includes(state);
+  $('#driveDisconnected').hidden = state !== 'disconnected';
+  $('#driveConnected').hidden = state !== 'connected';
+  $('#driveError').hidden = state !== 'error';
+  const labels = { loading: 'Comprobando…', connecting: 'Conectando…', syncing: 'Sincronizando…', connected: 'Conectado', disconnected: 'Sin conectar', error: 'Sin conexión' };
+  $('#driveStatus').querySelector('span').textContent = labels[state] || state;
+  if (state === 'connecting') { $('#driveLoading strong').textContent = 'Abriendo Google'; $('#driveLoading small').textContent = 'Completa la autorización para vincular tu biblioteca.'; }
+  else if (state === 'syncing') { $('#driveLoading strong').textContent = 'Sincronizando tu música'; $('#driveLoading small').textContent = 'Estamos leyendo los cambios de tus carpetas de Drive.'; }
+  else { $('#driveLoading strong').textContent = 'Comprobando Google Drive'; $('#driveLoading small').textContent = 'Tu biblioteca local seguirá disponible.'; }
+  if (message) $('#driveErrorMessage').textContent = message;
+}
+function formatDriveDate(value) {
+  if (!value) return 'Todavía no se ha sincronizado.';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Última sincronización disponible.';
+  return `Última sincronización: ${new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(date)}`;
+}
+function renderDriveFolders(folders = []) {
+  const list = $('#driveFolderList');
+  $('#driveFolderEmpty').hidden = folders.length !== 0;
+  $('#driveFolderTotal').textContent = `${folders.length} carpeta${folders.length === 1 ? '' : 's'}`;
+  list.innerHTML = folders.map(folder => {
+    const count = Number(folder.track_count || 0);
+    const tracks = Array.isArray(folder.tracks) ? folder.tracks : [];
+    const trackMarkup = tracks.length ? `<div class="drive-remote-tracks">${tracks.map(track => { const trackId = track.file_id || track.id; return `<div><span>${escape(track.title || track.name || 'Canción')}</span>${trackId ? `<button class="quiet-button save-drive-track" data-track-id="${escape(trackId)}" data-title="${escape(track.title || track.name || 'cancion')}">Guardar en iPhone</button>` : ''}</div>`; }).join('')}</div>` : '';
+    return `<article class="drive-folder" data-drive-folder="${escape(folder.id)}" tabindex="0" role="button" aria-label="Abrir ${escape(folder.name || 'carpeta de Drive')}"><span class="drive-folder-icon" aria-hidden="true"></span><div><strong>${escape(folder.name || 'Carpeta sin nombre')}</strong><small>${count} canción${count === 1 ? '' : 'es'} · Toca para verlas</small>${trackMarkup}</div><span class="drive-folder-count">${count}</span></article>`;
+  }).join('');
+  $$('.drive-folder').forEach(folder => { folder.onclick = event => { if (!event.target.closest('button')) loadDriveFolderTracks(folder.dataset.driveFolder); }; folder.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); loadDriveFolderTracks(folder.dataset.driveFolder); } }; });
+  $$('.save-drive-track').forEach(button => button.onclick = event => { event.stopPropagation(); saveDriveTrack(button); });
+}
+async function loadDriveFolderTracks(folderId) {
+  const folder = driveSnapshot?.folders.find(item => item.id === folderId);
+  if (!folder || folder.loading) return;
+  folder.loading = true;
+  try {
+    const response = await api(`/api/drive/folders/${encodeURIComponent(folderId)}/tracks`);
+    const payload = await response.json();
+    folder.tracks = Array.isArray(payload.tracks) ? payload.tracks : [];
+    renderDriveFolders(driveSnapshot.folders);
+  } catch (error) { showToast(driveErrorHint(error)); }
+  finally { folder.loading = false; }
+}
+async function saveDriveTrack(button) {
+  button.disabled = true;
+  button.textContent = 'Copiando…';
+  try {
+    const response = await api(`/api/drive/files/${encodeURIComponent(button.dataset.trackId)}/audio`);
+    const blob = await response.blob();
+    const safeTitle = (button.dataset.title || 'cancion').replace(/[\\/:*?"<>|]/g, '_');
+    await importFiles([new File([blob], safeTitle, { type: blob.type || 'audio/mpeg' })]);
+    button.textContent = 'Guardada';
+  } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; }
+}
+async function applyDrivePayload(payload) {
+  const drive = payload?.drive || payload || {};
+  driveSnapshot = { connected: Boolean(drive.connected), configured: drive.configured !== false, account_email: drive.account_email || '', folder_name: drive.folder_name || 'YT-MP3 Studio', last_sync_at: drive.last_sync_at || null, syncing: Boolean(drive.syncing), folders: Array.isArray(drive.folders) ? drive.folders : [], track_count: Number(drive.track_count || 0), error: drive.error || null };
+  if (driveSnapshot.error) { setDriveState('error', driveSnapshot.error); return; }
+  if (!driveSnapshot.configured) { setDriveState('error', 'Falta preparar Google Drive en el PC. Añade google-client-secret.json siguiendo la guía de configuración y vuelve a intentarlo.'); renderDriveFolders([]); return; }
+  if (!driveSnapshot.connected) { setDriveState('disconnected'); renderDriveFolders([]); await renderPlaylists(); return; }
+  const email = driveSnapshot.account_email;
+  $('#driveAvatar').textContent = (email || 'G').slice(0, 1).toUpperCase();
+  $('#driveAccountName').textContent = driveSnapshot.folder_name;
+  $('#driveAccountEmail').textContent = email || 'Google Drive conectado en el PC';
+  $('#driveSyncSummary').textContent = `${driveSnapshot.track_count} canción${driveSnapshot.track_count === 1 ? '' : 'es'} en ${driveSnapshot.folders.length} carpeta${driveSnapshot.folders.length === 1 ? '' : 's'}`;
+  $('#driveLastSync').textContent = formatDriveDate(driveSnapshot.last_sync_at);
+  renderDriveFolders(driveSnapshot.folders);
+  setDriveState(driveSnapshot.syncing ? 'syncing' : 'connected');
+  if (driveSnapshot.syncing) setTimeout(() => loadDriveStatus({ quiet: true }), 2000);
+  await renderPlaylists();
+}
+let driveRequestActive = false;
+async function loadDriveStatus({ quiet = false, autoSync = false } = {}) {
+  if (driveRequestActive) return;
+  driveRequestActive = true;
+  let shouldAutoSync = false;
+  if (!quiet || !driveSnapshot) setDriveState('loading');
+  try { const response = await api('/api/drive/status'); await applyDrivePayload(await response.json()); shouldAutoSync = autoSync && driveSnapshot?.connected && !driveSnapshot.syncing; }
+  catch (error) { setDriveState('error', driveErrorHint(error)); }
+  finally { driveRequestActive = false; }
+  if (shouldAutoSync) await syncDrive({ quiet: true });
+}
+async function connectDrive() {
+  setDriveState('connecting');
+  $('#driveConnect').disabled = true;
+  try {
+    const response = await api('/api/drive/connect', { method: 'POST' });
+    const payload = await response.json();
+    if (!payload.authorization_url) throw new Error('El PC no ha podido iniciar la autorización de Google.');
+    location.assign(payload.authorization_url);
+  } catch (error) { setDriveState('error', driveErrorHint(error)); $('#driveConnect').disabled = false; }
+}
+async function syncDrive({ quiet = false } = {}) {
+  if (driveRequestActive) return;
+  driveRequestActive = true;
+  setDriveState('syncing');
+  $('#driveSync').disabled = true;
+  try { const response = await api('/api/drive/sync', { method: 'POST' }); await applyDrivePayload(await response.json()); if (!quiet) showToast('Google Drive está actualizado.'); }
+  catch (error) { setDriveState('error', driveErrorHint(error)); }
+  finally { driveRequestActive = false; $('#driveSync').disabled = false; }
+}
+async function disconnectDrive() {
+  if (!confirm('¿Desconectar Google Drive? Las canciones guardadas en este dispositivo no se borrarán.')) return;
+  setDriveState('connecting');
+  try { const response = await api('/api/drive/disconnect', { method: 'POST' }); await applyDrivePayload(await response.json()); showToast('Google Drive desconectado.'); }
+  catch (error) { setDriveState('error', driveErrorHint(error)); }
+}
+function focusDriveFolder(folderId) {
+  navigate('library');
+  requestAnimationFrame(() => { const folder = $$('.drive-folder').find(item => item.dataset.driveFolder === folderId); (folder || $('#driveHub')).scrollIntoView({ behavior: 'smooth', block: 'center' }); folder?.classList.add('is-highlighted'); setTimeout(() => folder?.classList.remove('is-highlighted'), 1600); });
+}
 async function updateServerBanner(test = false) { const config = await serverConfig(); const banner = $('#serverBanner'); if (isLocalDesktopApp()) { banner.classList.add('online'); $('#serverStatus').textContent = 'Aplicación web local'; $('#serverHint').textContent = 'Conectada solo a este PC'; if (test) $('#connectionResult').textContent = 'Aplicación web local conectada correctamente.'; return true; } if (!config.url || !config.token) { banner.classList.remove('online'); $('#serverStatus').textContent = 'Servidor sin configurar'; $('#serverHint').textContent = 'Introduce la dirección y la clave en Ajustes.'; return false; } if (!test) { $('#serverStatus').textContent = 'Servidor configurado'; $('#serverHint').textContent = config.url; return true; } $('#serverStatus').textContent = 'Conectando con el PC…'; try { const response = await api('/api/health'); const result = await response.json(); banner.classList.add('online'); $('#serverStatus').textContent = 'PC conectado'; $('#serverHint').textContent = result.name || config.url; $('#connectionResult').textContent = `Conectado correctamente a ${config.url}`; return true; } catch (error) { banner.classList.remove('online'); $('#serverStatus').textContent = 'PC no disponible'; $('#serverHint').textContent = error.message; $('#connectionResult').textContent = error.message; return false; } }
 async function saveServerConfig() { const url = $('#serverUrl').value.trim().replace(/\/+$/, ''), token = $('#serverToken').value.trim(); if (!url || !token) { showToast('Completa la dirección y la clave del PC.'); return; } await Promise.all([setSetting('serverUrl', url), setSetting('serverToken', token)]); const ok = await updateServerBanner(true); showToast(ok ? 'Servidor conectado.' : 'No se pudo conectar con el PC.'); }
 async function searchRemote(event) { event.preventDefault(); $('#searchEmpty').hidden = true; $('#searchResults').innerHTML = '<p class="loading">Buscando desde el PC…</p>'; try { const response = await api(`/api/search?q=${encodeURIComponent($('#remoteQuery').value.trim())}&limit=12`); const payload = await response.json(); renderSearchResults(payload.results || []); } catch (error) { $('#searchResults').innerHTML = `<p class="error-card">${escape(error.message)}</p>`; } }
@@ -212,10 +333,16 @@ function bind() {
   $('#remoteSearchForm').onsubmit = searchRemote;
   $('#refreshJobs').onclick = loadJobs;
   $('#openServerSettings').onclick = () => navigate('settings');
+  $('#driveConnect').onclick = connectDrive;
+  $('#driveSync').onclick = syncDrive;
+  $('#driveDisconnect').onclick = disconnectDrive;
+  $('#driveRetry').onclick = () => loadDriveStatus();
+  $('#driveOpenSettings').onclick = () => navigate('settings');
+  $('#openDriveLibrary').onclick = () => { navigate('library'); requestAnimationFrame(() => $('#driveHub').scrollIntoView({ behavior: 'smooth', block: 'start' })); };
   $('#saveServer').onclick = saveServerConfig;
   $('#toggleToken').onclick = () => { const input = $('#serverToken'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggleToken').textContent = input.type === 'password' ? 'Mostrar clave' : 'Ocultar clave'; };
   $('#requestPersistence').onclick = async () => { const granted = await navigator.storage?.persist?.(); showToast(granted ? 'Safari protegerá los datos cuando sea posible.' : 'Safari no pudo garantizar el almacenamiento.'); };
   $('#clearLibrary').onclick = clearLibrary;
 }
-async function init() { db = await openDb(); bind(); await refresh(); $('#serverUrl').value = isLocalDesktopApp() ? location.origin : await getSetting('serverUrl'); $('#serverToken').value = await getSetting('serverToken'); await updateServerBanner(false); jobsTimer = setInterval(() => { if ($('#page-downloads').classList.contains('is-visible') && !document.hidden) loadJobs(); }, 4000); if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error); }
+async function init() { db = await openDb(); bind(); await refresh(); $('#serverUrl').value = isLocalDesktopApp() ? location.origin : await getSetting('serverUrl'); $('#serverToken').value = await getSetting('serverToken'); await updateServerBanner(false); const driveCallback = new URLSearchParams(location.search).get('drive') === 'connected'; await loadDriveStatus({ autoSync: true }); if (driveCallback) { const cleanUrl = new URL(location.href); cleanUrl.searchParams.delete('drive'); history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`); showToast('Google Drive conectado.'); } jobsTimer = setInterval(() => { if ($('#page-downloads').classList.contains('is-visible') && !document.hidden) loadJobs(); }, 4000); driveTimer = setInterval(() => { if (!document.hidden && driveSnapshot?.connected) syncDrive({ quiet: true }); }, 300000); if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error); }
 init().catch(error => { console.error(error); showToast('No se pudo abrir la biblioteca local.'); });

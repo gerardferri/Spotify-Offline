@@ -45,6 +45,34 @@ class FakeBackend:
             created_at="2026-01-01T00:00:00Z",
         )
 
+    def drive_status(self):
+        return {
+            "connected": True,
+            "configured": True,
+            "account_email": "me@example.test",
+            "folder_name": "YT-MP3 Studio",
+            "last_sync_at": "2026-07-22T12:00:00Z",
+            "syncing": False,
+            "folders": [{"id": "rock", "name": "Rock", "track_count": 1}],
+            "track_count": 1,
+        }
+
+    def drive_authorization_url(self):
+        return "https://accounts.google.test/oauth"
+
+    def sync_drive(self):
+        return self.drive_status()
+
+    def disconnect_drive(self):
+        return {**self.drive_status(), "connected": False}
+
+    def drive_tracks(self, folder_id=None):
+        return [{"file_id": "drive-track", "folder_id": folder_id, "name": "Drive.mp3"}]
+
+    def download_drive_track(self, file_id, range_header=None):
+        assert file_id == "drive-track"
+        return b"drive-audio", {"Content-Type": "audio/mpeg"}, 200
+
 
 @pytest.fixture
 def api(tmp_path):
@@ -108,6 +136,24 @@ def test_search_enqueue_and_queue_snapshot(api):
     assert json.loads(payload)["jobs"][0]["track_id"] == "track-1"
 
 
+def test_drive_catalog_sync_tracks_and_audio(api):
+    status, payload = request(api, "GET", "/api/drive/status")
+    assert status.status == 200
+    assert json.loads(payload)["drive"]["account_email"] == "me@example.test"
+
+    synced, payload = request(api, "POST", "/api/drive/sync")
+    assert synced.status == 200
+    assert json.loads(payload)["drive"]["track_count"] == 1
+
+    tracks, payload = request(api, "GET", "/api/drive/folders/rock/tracks")
+    assert tracks.status == 200
+    assert json.loads(payload)["tracks"][0]["file_id"] == "drive-track"
+
+    audio, data = request(api, "GET", "/api/drive/files/drive-track/audio")
+    assert audio.status == 200
+    assert data == b"drive-audio"
+
+
 def test_audio_supports_byte_ranges(api):
     response, data = request(
         api,
@@ -166,6 +212,16 @@ def test_local_web_serves_pwa_and_allows_only_its_same_origin_without_token(tmp_
         )
         assert health.status == 200
         assert json.loads(payload)["ok"] is True
+
+        connect, payload = request(
+            server.server_address,
+            "POST",
+            "/api/drive/connect",
+            token=None,
+            headers={"Origin": local_origin},
+        )
+        assert connect.status == 200
+        assert json.loads(payload)["authorization_url"].startswith("https://accounts.google.test/")
 
         remote, _payload = request(
             server.server_address,

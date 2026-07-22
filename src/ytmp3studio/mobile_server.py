@@ -21,7 +21,7 @@ import mimetypes
 from pathlib import Path
 import secrets
 import sys
-from threading import Timer
+from threading import Lock, Timer
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 import webbrowser
@@ -30,11 +30,18 @@ from ytmp3studio.backend.adapters.ffmpeg_adapter import FfmpegAdapter
 from ytmp3studio.backend.adapters.media_files import MediaFiles
 from ytmp3studio.backend.adapters.ytdlp_adapter import YtDlpAdapter
 from ytmp3studio.backend.logging_config import configure_logging, user_data_dir
+from ytmp3studio.backend.google_drive_client import (
+    DriveConfigurationError,
+    GoogleApiError,
+    GoogleDriveClient,
+)
+from ytmp3studio.backend.google_drive_service import GoogleDriveService
 from ytmp3studio.backend.queue_service import QueueService
 from ytmp3studio.backend.search_service import SearchService
 from ytmp3studio.domain.errors import AppError, ErrorCode
 from ytmp3studio.domain.models import LibraryTrack
 from ytmp3studio.persistence.database import Database
+from ytmp3studio.persistence.drive_repository import DriveRepository
 from ytmp3studio.persistence.repositories import (
     DownloadJobRepository,
     HistoryRepository,
@@ -53,13 +60,29 @@ PWA_DIRECTORY = PROJECT_ROOT / "prototype"
 class MobileBackend:
     """Qt-free composition root for search, queue and library access."""
 
-    def __init__(self, database_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        database_path: str | Path | None = None,
+        *,
+        drive_redirect_uri: str = "http://127.0.0.1:8766/api/drive/callback",
+        google_client_path: str | Path | None = None,
+        drive_client: Any | None = None,
+    ) -> None:
         self.database = Database(database_path or user_data_dir() / "ytmp3studio.db")
         self.database.migrate()
         self.jobs = DownloadJobRepository(self.database)
         self.library = LibraryRepository(self.database)
         self.settings = SettingsRepository(self.database)
         self.history = HistoryRepository(self.database)
+        drive_data = user_data_dir()
+        self.drive_client = drive_client or GoogleDriveClient(
+            google_client_path or drive_data / "google-client-secret.json",
+            drive_data / "google-drive-token.json",
+            drive_redirect_uri,
+        )
+        self.drive_service = GoogleDriveService(self.drive_client, self.drive_client)
+        self.drive_repository = DriveRepository(self.database)
+        self._drive_sync_lock = Lock()
         ffmpeg = FfmpegAdapter()
         self.provider = YtDlpAdapter(ffmpeg=ffmpeg, media_files=MediaFiles())
         self.search_service = SearchService(self.provider)
@@ -90,6 +113,64 @@ class MobileBackend:
 
     def get_track(self, track_id: str) -> LibraryTrack | None:
         return self.library.get(track_id)
+
+    def drive_status(self) -> dict[str, Any]:
+        configured = bool(getattr(self.drive_client, "configured", True))
+        connected = configured and self.drive_client.is_connected()
+        status = self.drive_repository.status(connected=connected)
+        status.update(
+            {
+                "configured": configured,
+                "syncing": self._drive_sync_lock.locked(),
+                "setup_required": None if configured else "google-client-secret.json",
+            }
+        )
+        return status
+
+    def drive_authorization_url(self) -> str:
+        return self.drive_service.authorization_url()
+
+    def complete_drive_authorization(self, code: str, state: str) -> dict[str, Any]:
+        validator = getattr(self.drive_client, "validate_state", None)
+        if validator is not None and not validator(state):
+            raise ValueError("La respuesta de Google no coincide con la conexión iniciada.")
+        connection = self.drive_service.connect(code)
+        return self._sync_drive(connection.account_email, connection.account_name)
+
+    def sync_drive(self) -> dict[str, Any]:
+        if not self.drive_client.is_connected():
+            raise ValueError("Conecta primero tu cuenta de Google Drive desde el PC.")
+        connection = self.drive_service.connection_state()
+        return self._sync_drive(connection.account_email, connection.account_name)
+
+    def _sync_drive(self, account_email: str | None, account_name: str | None) -> dict[str, Any]:
+        if not self._drive_sync_lock.acquire(blocking=False):
+            raise ValueError("Google Drive ya se está sincronizando.")
+        try:
+            snapshot = self.drive_service.scan_library()
+            return self.drive_repository.replace_snapshot(
+                snapshot,
+                account_email=account_email,
+                account_name=account_name,
+            )
+        except Exception as exc:
+            self.drive_repository.record_error(str(exc))
+            raise
+        finally:
+            self._drive_sync_lock.release()
+
+    def disconnect_drive(self) -> dict[str, Any]:
+        self.drive_service.disconnect()
+        self.drive_repository.clear()
+        return self.drive_status()
+
+    def drive_tracks(self, folder_id: str | None = None) -> list[dict[str, Any]]:
+        return self.drive_repository.list_tracks(folder_id)
+
+    def download_drive_track(self, file_id: str, range_header: str | None = None):
+        if not any(track["file_id"] == file_id for track in self.drive_repository.list_tracks()):
+            raise ValueError("La canción de Google Drive no existe en el catálogo.")
+        return self.drive_client.download(file_id, range_header)
 
     def close(self) -> None:
         self.queue.shutdown()
@@ -159,6 +240,27 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/jobs":
                 self._json(HTTPStatus.OK, {"jobs": self.server.backend.queue_snapshot()})
                 return
+            if parsed.path == "/api/drive/status":
+                self._json(HTTPStatus.OK, {"drive": self.server.backend.drive_status()})
+                return
+            if parsed.path == "/api/drive/callback":
+                params = parse_qs(parsed.query)
+                if params.get("error"):
+                    self._redirect("/?drive=error")
+                    return
+                code = params.get("code", [""])[0]
+                state = params.get("state", [""])[0]
+                self.server.backend.complete_drive_authorization(code, state)
+                self._redirect("/?drive=connected")
+                return
+            if parsed.path.startswith("/api/drive/folders/") and parsed.path.endswith("/tracks"):
+                folder_id = parsed.path.removeprefix("/api/drive/folders/").removesuffix("/tracks").strip("/")
+                self._json(HTTPStatus.OK, {"tracks": self.server.backend.drive_tracks(folder_id)})
+                return
+            if parsed.path.startswith("/api/drive/files/") and parsed.path.endswith("/audio"):
+                file_id = parsed.path.removeprefix("/api/drive/files/").removesuffix("/audio").strip("/")
+                self._send_drive_audio(file_id)
+                return
             if parsed.path.startswith("/api/tracks/") and parsed.path.endswith("/audio"):
                 track_id = parsed.path.removeprefix("/api/tracks/").removesuffix("/audio").strip("/")
                 self._send_audio(track_id)
@@ -166,6 +268,8 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             self._json_error(HTTPStatus.NOT_FOUND, "NOT_FOUND", "Ruta no encontrada.")
         except ValueError as exc:
             self._json_error(HTTPStatus.BAD_REQUEST, "INVALID_INPUT", str(exc))
+        except (DriveConfigurationError, GoogleApiError) as exc:
+            self._json_error(HTTPStatus.SERVICE_UNAVAILABLE, "GOOGLE_DRIVE_ERROR", str(exc))
         except AppError as exc:
             self._app_error(exc)
         except Exception as exc:  # pragma: no cover
@@ -182,16 +286,33 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             return
         parsed = urlsplit(self.path)
         try:
-            if parsed.path != "/api/jobs":
-                self._json_error(HTTPStatus.NOT_FOUND, "NOT_FOUND", "Ruta no encontrada.")
+            if parsed.path == "/api/jobs":
+                payload = self._read_json()
+                video_id = str(payload.get("video_id", "")).strip()
+                quality_value = payload.get("quality_kbps")
+                quality = None if quality_value in (None, "") else int(quality_value)
+                self._json(HTTPStatus.ACCEPTED, {"jobs": self.server.backend.enqueue(video_id, quality)})
                 return
-            payload = self._read_json()
-            video_id = str(payload.get("video_id", "")).strip()
-            quality_value = payload.get("quality_kbps")
-            quality = None if quality_value in (None, "") else int(quality_value)
-            self._json(HTTPStatus.ACCEPTED, {"jobs": self.server.backend.enqueue(video_id, quality)})
+            if parsed.path == "/api/drive/connect":
+                if not self._is_local_web_request():
+                    self._json_error(HTTPStatus.FORBIDDEN, "LOCAL_ONLY", "Conecta Google Drive desde el PC.")
+                    return
+                self._json(HTTPStatus.OK, {"authorization_url": self.server.backend.drive_authorization_url()})
+                return
+            if parsed.path == "/api/drive/sync":
+                self._json(HTTPStatus.OK, {"drive": self.server.backend.sync_drive()})
+                return
+            if parsed.path == "/api/drive/disconnect":
+                if not self._is_local_web_request():
+                    self._json_error(HTTPStatus.FORBIDDEN, "LOCAL_ONLY", "Desconecta Google Drive desde el PC.")
+                    return
+                self._json(HTTPStatus.OK, {"drive": self.server.backend.disconnect_drive()})
+                return
+            self._json_error(HTTPStatus.NOT_FOUND, "NOT_FOUND", "Ruta no encontrada.")
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             self._json_error(HTTPStatus.BAD_REQUEST, "INVALID_INPUT", "Petici\u00f3n no v\u00e1lida.", detail=str(exc))
+        except (DriveConfigurationError, GoogleApiError) as exc:
+            self._json_error(HTTPStatus.SERVICE_UNAVAILABLE, "GOOGLE_DRIVE_ERROR", str(exc))
         except AppError as exc:
             self._app_error(exc)
         except Exception as exc:  # pragma: no cover
@@ -288,6 +409,12 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _json_error(
         self,
         status: HTTPStatus,
@@ -336,6 +463,20 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
+
+    def _send_drive_audio(self, file_id: str) -> None:
+        data, headers, status = self.server.backend.download_drive_track(
+            file_id, self.headers.get("Range")
+        )
+        self.send_response(status)
+        self._cors_headers()
+        self.send_header("Content-Type", headers.get("Content-Type", "audio/mpeg"))
+        self.send_header("Accept-Ranges", "bytes")
+        if headers.get("Content-Range"):
+            self.send_header("Content-Range", headers["Content-Range"])
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def log_message(self, format_string: str, *args: Any) -> None:
         logger.info("mobile_api client=%s %s", self.client_address[0], format_string % args)
@@ -390,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", help="Clave fija; si se omite se genera y guarda una segura")
     parser.add_argument("--allow-origin", action="append", default=[], help="Origen HTTPS adicional permitido")
     parser.add_argument("--database", type=Path, help="Base de datos alternativa para pruebas")
+    parser.add_argument("--google-client", type=Path, help="Archivo OAuth de aplicación de escritorio descargado de Google Cloud")
     parser.add_argument("--web", action="store_true", help="Sirve la aplicaciÃ³n web local para usarla desde el PC")
     parser.add_argument("--open-browser", action="store_true", help="Abre la aplicaciÃ³n web en el navegador (requiere --web)")
     return parser
@@ -405,7 +547,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"No se ha encontrado la PWA en {PWA_DIRECTORY}")
     configure_logging()
     token = load_or_create_token(args.token)
-    backend = MobileBackend(args.database)
+    backend = MobileBackend(
+        args.database,
+        drive_redirect_uri=f"http://127.0.0.1:{args.port}/api/drive/callback",
+        google_client_path=args.google_client,
+    )
     server = MobileApiServer(
         (args.host, args.port),
         backend,
