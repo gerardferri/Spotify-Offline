@@ -405,6 +405,11 @@ async function runSpotifyPlaylistAction(button) {
 }
 
 function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'playlists' && PC_LOOPBACK) loadSpotifyPlaylists({ quiet: true }); if (pageName === 'search' && PC_HOSTED) loadDownloadFolders(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+function openSpotifyImport() {
+  navigate('playlists');
+  requestAnimationFrame(() => $('#spotifyImport').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
 // Cuando la web la sirve el PC (localhost o su IP privada de la WiFi) las
 // peticiones van a su mismo origen y no hacen falta dirección ni clave. Servida
 // desde un alojamiento estático (GitHub Pages) no hay PC detrás: la aplicación
@@ -632,6 +637,8 @@ function bind() {
   $('#newPlaylistForm').onsubmit = createPlaylist;
   if (PC_LOOPBACK) {
     $('#spotifyImport').hidden = false;
+    $('#openSpotifyImport').hidden = false;
+    $('#openSpotifyImport').onclick = openSpotifyImport;
     $('#spotifyFile').onchange = event => importSpotifyFile(event.target.files[0]);
     for (const eventName of ['dragenter', 'dragover']) $('#spotifyDrop').addEventListener(eventName, event => { event.preventDefault(); $('#spotifyDrop').classList.add('is-dragging'); });
     for (const eventName of ['dragleave', 'drop']) $('#spotifyDrop').addEventListener(eventName, event => { event.preventDefault(); $('#spotifyDrop').classList.remove('is-dragging'); });

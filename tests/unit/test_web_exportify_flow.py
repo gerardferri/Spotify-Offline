@@ -29,6 +29,7 @@ def test_exportify_import_controls_exist_in_the_playlist_page() -> None:
         "spotifyFile",
         "spotifyImportStatus",
         "spotifyServerList",
+        "openSpotifyImport",
     } <= parser.ids
 
 
@@ -40,4 +41,5 @@ def test_exportify_flow_is_loopback_only_and_starts_all_downloads() -> None:
     assert "/api/playlists/import?filename=" in javascript
     assert "/api/playlists/download-all" in javascript
     assert "importSpotifyFile(event.dataTransfer.files[0])" in javascript
-
+    assert "function openSpotifyImport()" in javascript
+    assert "$('#openSpotifyImport').hidden = false" in javascript
