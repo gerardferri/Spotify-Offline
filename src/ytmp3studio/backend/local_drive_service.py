@@ -5,8 +5,10 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 import hashlib
+import logging
 import os
 from pathlib import Path
+import zipfile
 from ytmp3studio.backend.google_drive_service import (
     APP_FOLDER_NAME,
     DriveFolder,
@@ -20,6 +22,7 @@ _AUDIO_EXTENSIONS = frozenset(
 )
 _MY_DRIVE_NAMES = ("Mi unidad", "My Drive")
 DOWNLOADS_FOLDER_NAME = "Descargas"
+EXPORTS_FOLDER_NAME = "Exportaciones ZIP"
 _INVALID_FOLDER_CHARACTERS = frozenset('<>:"|?*')
 _MAX_FOLDER_NAME_LENGTH = 100
 _RESERVED_WINDOWS_NAMES = frozenset(
@@ -27,6 +30,8 @@ _RESERVED_WINDOWS_NAMES = frozenset(
     | {f"COM{number}" for number in range(1, 10)}
     | {f"LPT{number}" for number in range(1, 10)}
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +57,12 @@ class LocalGoogleDriveService:
 
         return self.music_root / DOWNLOADS_FOLDER_NAME
 
+    @property
+    def exports_root(self) -> Path:
+        """Folder that stores downloadable playlist archives."""
+
+        return self.music_root / EXPORTS_FOLDER_NAME
+
     def is_connected(self) -> bool:
         return self.configured
 
@@ -70,10 +81,108 @@ class LocalGoogleDriveService:
             (
                 path.name
                 for path in self.music_root.iterdir()
-                if path.is_dir() and not path.name.startswith(".")
+                if path.is_dir()
+                and not path.name.startswith(".")
+                and path.name != EXPORTS_FOLDER_NAME
             ),
             key=str.casefold,
         )
+
+    def refresh_zip_exports(self) -> list[str]:
+        """Create or update archives for direct playlist folders."""
+
+        updated: list[str] = []
+        try:
+            folders = sorted(
+                (
+                    path
+                    for path in self.music_root.iterdir()
+                    if path.is_dir()
+                    and not path.name.startswith(".")
+                    and path.name != EXPORTS_FOLDER_NAME
+                ),
+                key=lambda path: path.name.casefold(),
+            )
+        except OSError:
+            logger.exception("No se han podido leer las carpetas para exportar ZIP.")
+            return updated
+
+        for folder in folders:
+            zip_path = self.exports_root / f"{folder.name}.zip"
+            temporary_path = zip_path.with_suffix(".zip.tmp")
+            try:
+                audio_files = sorted(
+                    (
+                        path
+                        for path in folder.iterdir()
+                        if path.is_file()
+                        and path.suffix.casefold() in _AUDIO_EXTENSIONS
+                    ),
+                    key=lambda path: path.name.casefold(),
+                )
+                if not audio_files:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                    continue
+
+                stale = not zip_path.is_file()
+                if not stale:
+                    zip_mtime = zip_path.stat().st_mtime
+                    try:
+                        with zipfile.ZipFile(zip_path) as archive:
+                            audio_entry_count = sum(
+                                Path(info.filename).suffix.casefold()
+                                in _AUDIO_EXTENSIONS
+                                for info in archive.infolist()
+                            )
+                    except (OSError, zipfile.BadZipFile):
+                        stale = True
+                    else:
+                        stale = audio_entry_count != len(audio_files) or any(
+                            path.stat().st_mtime > zip_mtime for path in audio_files
+                        )
+                if not stale:
+                    continue
+
+                self.exports_root.mkdir(parents=True, exist_ok=True)
+                with zipfile.ZipFile(
+                    temporary_path,
+                    "w",
+                    compression=zipfile.ZIP_DEFLATED,
+                ) as archive:
+                    for path in audio_files:
+                        archive.write(path, arcname=path.name)
+                os.replace(temporary_path, zip_path)
+                updated.append(folder.name)
+            except OSError:
+                logger.exception(
+                    "No se ha podido actualizar la exportación ZIP de %s.",
+                    folder.name,
+                )
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception(
+                        "No se ha podido eliminar el ZIP temporal de %s.",
+                        folder.name,
+                    )
+
+        return updated
+
+    def zip_path_for(self, name: str) -> Path | None:
+        """Return an existing archive for a safe playlist name."""
+
+        try:
+            folder_name = _validate_folder_name(name)
+        except ValueError:
+            return None
+        if folder_name == EXPORTS_FOLDER_NAME:
+            return None
+        zip_path = self.exports_root / f"{folder_name}.zip"
+        try:
+            return zip_path if zip_path.is_file() else None
+        except OSError:
+            return None
 
     def resolve_folder(self, name: str | None) -> Path:
         """Create and resolve a safe destination below the music root."""
@@ -81,25 +190,10 @@ class LocalGoogleDriveService:
         if name is None or not name.strip():
             target = self.downloads_root
         else:
-            folder_name = name.strip()
-            reserved_name = folder_name.split(".", 1)[0].upper()
-            invalid = (
-                "/" in folder_name
-                or "\\" in folder_name
-                or folder_name in {".", ".."}
-                or Path(folder_name).is_absolute()
-                or reserved_name in _RESERVED_WINDOWS_NAMES
-                or any(char in _INVALID_FOLDER_CHARACTERS for char in folder_name)
-                # Control characters and overlong names reach the filesystem as
-                # an OSError, which would surface as an opaque server error.
-                or any(ord(char) < 32 for char in folder_name)
-                or len(folder_name) > _MAX_FOLDER_NAME_LENGTH
-            )
-            if invalid:
+            folder_name = _validate_folder_name(name)
+            if folder_name == EXPORTS_FOLDER_NAME:
                 raise ValueError(
-                    "El nombre de la carpeta no es válido. Usa un nombre simple de "
-                    f"hasta {_MAX_FOLDER_NAME_LENGTH} caracteres, sin rutas, sin "
-                    "nombres reservados y sin los caracteres < > : \" | ? *."
+                    "La carpeta Exportaciones ZIP está reservada. Elige otro nombre."
                 )
             target = self.music_root / folder_name
 
@@ -124,6 +218,10 @@ class LocalGoogleDriveService:
             raise RuntimeError("Google Drive para ordenador no está disponible.")
         self.music_root.mkdir(parents=True, exist_ok=True)
         self.ensure_downloads_folder()
+        try:
+            self.refresh_zip_exports()
+        except Exception:
+            logger.exception("No se han podido actualizar las exportaciones ZIP.")
         root_id = _stable_id(self.music_root)
         root = DriveFolder(root_id, APP_FOLDER_NAME, "root", _modified(self.music_root))
         folders: list[DriveFolder] = []
@@ -133,7 +231,15 @@ class LocalGoogleDriveService:
         for current, directory_names, file_names in os.walk(self.music_root):
             current_path = Path(current)
             directory_names[:] = sorted(
-                (name for name in directory_names if not name.startswith(".")),
+                (
+                    name
+                    for name in directory_names
+                    if not name.startswith(".")
+                    and not (
+                        current_path == self.music_root
+                        and name == EXPORTS_FOLDER_NAME
+                    )
+                ),
                 key=str.casefold,
             )
             parent_id = folder_ids[current_path]
@@ -170,6 +276,33 @@ class LocalGoogleDriveService:
         )
         changes_token = hashlib.sha256(token_source.encode("utf-8")).hexdigest()
         return DriveLibrarySnapshot(root, tuple(folders), tuple(tracks), changes_token)
+
+
+def _validate_folder_name(name: str) -> str:
+    """Validate and normalize a direct playlist folder name."""
+
+    folder_name = name.strip()
+    reserved_name = folder_name.split(".", 1)[0].upper()
+    invalid = (
+        not folder_name
+        or "/" in folder_name
+        or "\\" in folder_name
+        or folder_name in {".", ".."}
+        or Path(folder_name).is_absolute()
+        or reserved_name in _RESERVED_WINDOWS_NAMES
+        or any(char in _INVALID_FOLDER_CHARACTERS for char in folder_name)
+        # Control characters and overlong names reach the filesystem as an
+        # OSError, which would surface as an opaque server error.
+        or any(ord(char) < 32 for char in folder_name)
+        or len(folder_name) > _MAX_FOLDER_NAME_LENGTH
+    )
+    if invalid:
+        raise ValueError(
+            "El nombre de la carpeta no es válido. Usa un nombre simple de "
+            f"hasta {_MAX_FOLDER_NAME_LENGTH} caracteres, sin rutas, sin "
+            "nombres reservados y sin los caracteres < > : \" | ? *."
+        )
+    return folder_name
 
 
 def detect_google_drive() -> LocalDriveLocation | None:

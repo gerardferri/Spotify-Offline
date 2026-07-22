@@ -21,11 +21,60 @@ function escape(text = '') { const el = document.createElement('span'); el.textC
 function showToast(text) { $('#toast').textContent = text; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 2800); }
 
 async function digest(file) { const bytes = await file.arrayBuffer(); const hash = await crypto.subtle.digest('SHA-256', bytes); return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join(''); }
+async function unzip(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  const minimumEocdOffset = Math.max(0, bytes.length - 22 - 65535);
+  let eocdOffset = -1;
+  for (let offset = bytes.length - 22; offset >= minimumEocdOffset; offset--) {
+    if (view.getUint32(offset, true) === 0x06054b50 && offset + 22 + view.getUint16(offset + 20, true) === bytes.length) { eocdOffset = offset; break; }
+  }
+  if (eocdOffset < 0) throw new Error('El archivo descargado no es un ZIP válido.');
+
+  const totalEntries = view.getUint16(eocdOffset + 10, true);
+  let cursor = view.getUint32(eocdOffset + 16, true);
+  const entries = [];
+  const decoder = new TextDecoder('utf-8');
+  const mimeTypes = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg' };
+  for (let index = 0; index < totalEntries; index++) {
+    if (cursor + 46 > bytes.length || view.getUint32(cursor, true) !== 0x02014b50) throw new Error('El archivo ZIP está dañado o incompleto.');
+    const flags = view.getUint16(cursor + 8, true);
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const uncompressedSize = view.getUint32(cursor + 24, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const entryEnd = cursor + 46 + nameLength + extraLength + commentLength;
+    if (entryEnd > bytes.length) throw new Error('El archivo ZIP está dañado o incompleto.');
+    const nameBytes = bytes.subarray(cursor + 46, cursor + 46 + nameLength);
+    const name = flags & 0x0800 ? decoder.decode(nameBytes) : new TextDecoder('utf-8').decode(nameBytes);
+    cursor = entryEnd;
+    if (name.endsWith('/') || (method !== 0 && method !== 8)) continue;
+    if (localOffset + 30 > bytes.length || view.getUint32(localOffset, true) !== 0x04034b50) throw new Error('El archivo ZIP está dañado o incompleto.');
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset + compressedSize > bytes.length) throw new Error('El archivo ZIP está dañado o incompleto.');
+    const compressedBytes = bytes.subarray(dataOffset, dataOffset + compressedSize);
+    let contents;
+    if (method === 0) contents = compressedBytes;
+    else {
+      const stream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      contents = await new Response(stream).blob();
+    }
+    if (contents.size !== undefined && contents.size !== uncompressedSize) throw new Error(`No se pudo descomprimir correctamente “${name}”.`);
+    const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+    entries.push({ name, blob: new Blob([contents], { type: mimeTypes[extension] || 'application/octet-stream' }) });
+  }
+  return entries;
+}
 function syncSafeInt(bytes, offset) { return ((bytes[offset] & 0x7f) << 21) | ((bytes[offset + 1] & 0x7f) << 14) | ((bytes[offset + 2] & 0x7f) << 7) | (bytes[offset + 3] & 0x7f); }
 function decodeText(data, encoding) { if (!data?.length) return ''; const label = encoding === 1 || encoding === 2 ? 'utf-16' : encoding === 3 ? 'utf-8' : 'iso-8859-1'; try { return new TextDecoder(label).decode(data).replace(/^\uFEFF/, '').replace(/\0/g, '').trim(); } catch { return ''; } }
 function id3v2(buffer) { const bytes = new Uint8Array(buffer); const result = {}; if (String.fromCharCode(...bytes.slice(0, 3)) !== 'ID3') return result; const major = bytes[3], end = 10 + syncSafeInt(bytes, 6); let pos = 10; while (pos + 10 <= end && pos + 10 <= bytes.length) { const key = String.fromCharCode(...bytes.slice(pos, pos + 4)); const size = major === 4 ? syncSafeInt(bytes, pos + 4) : new DataView(buffer).getUint32(pos + 4); if (!key.trim() || size <= 0 || pos + 10 + size > bytes.length) break; const data = bytes.slice(pos + 10, pos + 10 + size); if (key === 'TIT2') result.title = decodeText(data.slice(1), data[0]); if (key === 'TPE1') result.artist = decodeText(data.slice(1), data[0]); if (key === 'TALB') result.album = decodeText(data.slice(1), data[0]); if (key === 'APIC') { let cursor = 1; while (cursor < data.length && data[cursor]) cursor++; const mime = new TextDecoder().decode(data.slice(1, cursor)) || 'image/jpeg'; cursor += 2; const descriptionEnd = data[0] === 1 || data[0] === 2 ? (() => { let p = cursor; while (p + 1 < data.length && (data[p] || data[p + 1])) p += 2; return p + 2; })() : (() => { let p = cursor; while (p < data.length && data[p]) p++; return p + 1; })(); if (descriptionEnd < data.length) result.cover = new Blob([data.slice(descriptionEnd)], { type: mime }); } pos += 10 + size; } return result; }
 function fallbackName(name) { return name.replace(/\.[^.]+$/, '').replace(/[._-]+/g, ' ').trim(); }
-async function importFiles(fileList, { offerPlaylist = false } = {}) { const files = [...fileList].filter(file => file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)); if (!files.length) return; const imported = []; let added = 0, duplicates = 0; for (const file of files) { try { const fingerprint = await digest(file); const existing = await requestAsPromise(tx('tracks').index('fingerprint').get(fingerprint)); if (existing) { duplicates++; imported.push(existing); continue; } const info = id3v2(await file.arrayBuffer()); const track = { id: id(), fingerprint, blob: file, cover: info.cover || null, title: info.title || fallbackName(file.name), artist: info.artist || 'Artista desconocido', album: info.album || '', createdAt: new Date().toISOString(), size: file.size, mime: file.type || 'audio/mpeg', favorite: false, duration: null }; await requestAsPromise(tx('tracks', 'readwrite').put(track)); imported.push(track); added++; } catch (error) { console.error('No se pudo importar el archivo', error); } } await refresh(); showToast(`${added} pista${added === 1 ? '' : 's'} importada${added === 1 ? '' : 's'}${duplicates ? ` · ${duplicates} ya existían` : ''}`); $('#fileInput').value = ''; if (offerPlaylist && imported.length) offerImportPlaylist(imported); }
+async function importFiles(fileList, { offerPlaylist = false } = {}) { const files = [...fileList].filter(file => file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)); if (!files.length) return []; const imported = []; let added = 0, duplicates = 0; for (const file of files) { try { const fingerprint = await digest(file); const existing = await requestAsPromise(tx('tracks').index('fingerprint').get(fingerprint)); if (existing) { duplicates++; imported.push(existing); continue; } const info = id3v2(await file.arrayBuffer()); const track = { id: id(), fingerprint, blob: file, cover: info.cover || null, title: info.title || fallbackName(file.name), artist: info.artist || 'Artista desconocido', album: info.album || '', createdAt: new Date().toISOString(), size: file.size, mime: file.type || 'audio/mpeg', favorite: false, duration: null }; await requestAsPromise(tx('tracks', 'readwrite').put(track)); imported.push(track); added++; } catch (error) { console.error('No se pudo importar el archivo', error); } } await refresh(); showToast(`${added} pista${added === 1 ? '' : 's'} importada${added === 1 ? '' : 's'}${duplicates ? ` · ${duplicates} ya existían` : ''}`); $('#fileInput').value = ''; if (offerPlaylist && imported.length) offerImportPlaylist(imported); return imported; }
 
 // iOS no permite adjuntar una carpeta, así que la agrupación se propone a partir
 // de las etiquetas ID3 comunes: al importar el contenido de una carpeta de Drive
@@ -239,10 +288,12 @@ function renderDriveFolders(folders = []) {
   list.innerHTML = folders.map(folder => {
     const count = Number(folder.track_count || 0);
     const tracks = Array.isArray(folder.tracks) ? folder.tracks : [];
+    const folderZipMarkup = folder.has_zip ? `<button class="quiet-button save-drive-folder-zip" data-folder-name="${escape(folder.name || '')}">Guardar en iPhone</button>` : '';
     const trackMarkup = tracks.length ? `<div class="drive-remote-tracks">${tracks.map(track => { const trackId = track.file_id || track.id; return `<div><span>${escape(track.title || track.name || 'Canción')}</span>${trackId ? `<button class="quiet-button save-drive-track" data-track-id="${escape(trackId)}" data-title="${escape(track.title || track.name || 'cancion')}">Guardar en iPhone</button>` : ''}</div>`; }).join('')}</div>` : '';
-    return `<article class="drive-folder" data-drive-folder="${escape(folder.id)}" tabindex="0" role="button" aria-label="Abrir ${escape(folder.name || 'carpeta de Drive')}"><span class="drive-folder-icon" aria-hidden="true"></span><div><strong>${escape(folder.name || 'Carpeta sin nombre')}</strong><small>${songs(count)} · Toca para verlas</small>${trackMarkup}</div><span class="drive-folder-count">${count}</span></article>`;
+    return `<article class="drive-folder" data-drive-folder="${escape(folder.id)}" tabindex="0" role="button" aria-label="Abrir ${escape(folder.name || 'carpeta de Drive')}"><span class="drive-folder-icon" aria-hidden="true"></span><div><strong>${escape(folder.name || 'Carpeta sin nombre')}</strong><small>${songs(count)} · Toca para verlas</small>${folderZipMarkup}${trackMarkup}</div><span class="drive-folder-count">${count}</span></article>`;
   }).join('');
   $$('.drive-folder').forEach(folder => { folder.onclick = event => { if (!event.target.closest('button')) loadDriveFolderTracks(folder.dataset.driveFolder); }; folder.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); loadDriveFolderTracks(folder.dataset.driveFolder); } }; });
+  $$('.save-drive-folder-zip').forEach(button => button.onclick = event => { event.stopPropagation(); saveDriveFolderZip(button); });
   $$('.save-drive-track').forEach(button => button.onclick = event => { event.stopPropagation(); saveDriveTrack(button); });
 }
 async function loadDriveFolderTracks(folderId) {
@@ -265,6 +316,26 @@ async function saveDriveTrack(button) {
     const blob = await response.blob();
     const safeTitle = (button.dataset.title || 'cancion').replace(/[\\/:*?"<>|]/g, '_');
     await importFiles([new File([blob], safeTitle, { type: blob.type || 'audio/mpeg' })]);
+    button.textContent = 'Guardada';
+  } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; }
+}
+async function saveDriveFolderZip(button) {
+  const folderName = button.dataset.folderName;
+  button.disabled = true;
+  button.textContent = 'Descargando…';
+  try {
+    const response = await api(`/api/drive/folders/${encodeURIComponent(folderName)}/zip`);
+    const entries = await unzip(await response.arrayBuffer());
+    if (!entries.length) { showToast('La carpeta no contenía canciones para guardar.'); button.disabled = false; button.textContent = 'Guardar en iPhone'; return; }
+    const files = entries.map(entry => new File([entry.blob], entry.name, { type: entry.blob.type }));
+    const imported = await importFiles(files, { offerPlaylist: false });
+    if (!imported.length) { showToast('La carpeta no contenía canciones compatibles.'); button.disabled = false; button.textContent = 'Guardar en iPhone'; return; }
+    const playlistId = id();
+    await requestAsPromise(tx('playlists', 'readwrite').put({ id: playlistId, name: folderName, createdAt: new Date().toISOString() }));
+    for (const item of imported) await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId: item.id, addedAt: new Date().toISOString() }));
+    await refresh();
+    await renderPlaylists();
+    showToast(`${songs(imported.length)} guardadas en la playlist “${folderName}”.`);
     button.textContent = 'Guardada';
   } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; }
 }

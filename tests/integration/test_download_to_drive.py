@@ -67,6 +67,23 @@ def test_a_folder_chosen_by_the_user_is_never_overwritten(tmp_path) -> None:
         reopened.close()
 
 
+def test_sync_drive_response_reports_zip_availability_per_folder(backend, tmp_path) -> None:
+    """Regression: sync_drive() used to return drive_repository's raw dict, which
+    never carries has_zip - the button would vanish right after pressing Sync."""
+
+    folder = tmp_path / "Mi unidad" / "YT-MP3 Studio" / "Con musica"
+    folder.mkdir(parents=True)
+    (folder / "Tema.mp3").write_bytes(b"audio")
+    empty_folder = tmp_path / "Mi unidad" / "YT-MP3 Studio" / "Vacia"
+    empty_folder.mkdir()
+
+    status = backend.sync_drive()
+
+    by_name = {item["name"]: item for item in status["folders"]}
+    assert by_name["Con musica"]["has_zip"] is True
+    assert by_name["Vacia"]["has_zip"] is False
+
+
 def test_finishing_a_download_refreshes_the_drive_catalog(backend, tmp_path) -> None:
     downloads = tmp_path / "Mi unidad" / "YT-MP3 Studio" / "Descargas"
     (downloads / "Cancion nueva.mp3").write_bytes(b"audio")

@@ -4,6 +4,7 @@ from http.client import HTTPConnection
 import json
 from pathlib import Path
 from threading import Thread
+import zipfile
 
 import pytest
 
@@ -24,8 +25,9 @@ PWA_DIRECTORY = Path(__file__).resolve().parents[2] / "prototype"
 
 
 class FakeBackend:
-    def __init__(self, audio_path: Path) -> None:
+    def __init__(self, audio_path: Path, zip_path: Path | None = None) -> None:
         self.audio_path = audio_path
+        self.zip_path = zip_path
 
     def search(self, query: str, limit: int):
         return [{"video_id": "abc", "title": query, "channel": "Canal", "duration_seconds": 42}][:limit]
@@ -46,6 +48,9 @@ class FakeBackend:
 
     def drive_folder_names(self):
         return ["Descargas", "Rock"]
+
+    def drive_folder_zip(self, name):
+        return self.zip_path if name == "Rock" else None
 
     def create_drive_folder(self, name: str):
         if not name.strip():
@@ -79,7 +84,10 @@ class FakeBackend:
             "folder_name": "YT-MP3 Studio",
             "last_sync_at": "2026-07-22T12:00:00Z",
             "syncing": False,
-            "folders": [{"id": "rock", "name": "Rock", "track_count": 1}],
+            "folders": [
+                {"id": "rock", "name": "Rock", "track_count": 1, "has_zip": True},
+                {"id": "empty", "name": "Vacía", "track_count": 0, "has_zip": False},
+            ],
             "track_count": 1,
         }
 
@@ -104,7 +112,12 @@ class FakeBackend:
 def api(tmp_path):
     audio_path = tmp_path / "test.mp3"
     audio_path.write_bytes(b"0123456789")
-    server = MobileApiServer(("127.0.0.1", 0), FakeBackend(audio_path), TOKEN, {ORIGIN})
+    zip_path = tmp_path / "Rock.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("cancion.txt", b"contenido de prueba")
+    server = MobileApiServer(
+        ("127.0.0.1", 0), FakeBackend(audio_path, zip_path), TOKEN, {ORIGIN}
+    )
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -165,7 +178,9 @@ def test_search_enqueue_and_queue_snapshot(api):
 def test_drive_catalog_sync_tracks_and_audio(api):
     status, payload = request(api, "GET", "/api/drive/status")
     assert status.status == 200
-    assert json.loads(payload)["drive"]["account_email"] == "me@example.test"
+    drive = json.loads(payload)["drive"]
+    assert drive["account_email"] == "me@example.test"
+    assert [folder["has_zip"] for folder in drive["folders"]] == [True, False]
 
     synced, payload = request(api, "POST", "/api/drive/sync")
     assert synced.status == 200
@@ -190,6 +205,36 @@ def test_audio_supports_byte_ranges(api):
     assert response.status == 206
     assert response.getheader("Content-Range") == "bytes 2-5/10"
     assert data == b"2345"
+
+
+def test_drive_folder_zip_downloads_the_archive(api, tmp_path):
+    response, data = request(api, "GET", "/api/drive/folders/Rock/zip")
+
+    assert response.status == 200
+    assert response.getheader("Content-Type") == "application/zip"
+    assert response.getheader("Content-Disposition") == 'attachment; filename="Rock.zip"'
+    assert data == (tmp_path / "Rock.zip").read_bytes()
+
+
+def test_drive_folder_zip_returns_not_found_when_unavailable(api):
+    response, data = request(api, "GET", "/api/drive/folders/NoExiste/zip")
+
+    assert response.status == 404
+    assert json.loads(data)["error"]["code"] == "NOT_FOUND"
+
+
+def test_drive_folder_zip_supports_byte_ranges(api, tmp_path):
+    response, data = request(
+        api,
+        "GET",
+        "/api/drive/folders/Rock/zip",
+        headers={"Range": "bytes=0-4"},
+    )
+
+    zip_bytes = (tmp_path / "Rock.zip").read_bytes()
+    assert response.status == 206
+    assert response.getheader("Content-Range") == f"bytes 0-4/{len(zip_bytes)}"
+    assert data == zip_bytes[:5]
 
 
 @pytest.mark.parametrize(

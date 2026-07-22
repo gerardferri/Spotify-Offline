@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import zipfile
+
 import pytest
 
 from ytmp3studio.backend.local_drive_service import (
+    EXPORTS_FOLDER_NAME,
     LocalGoogleDriveService,
     detect_google_drive,
 )
@@ -83,6 +87,116 @@ def test_list_folders_returns_empty_when_music_root_does_not_exist(tmp_path) -> 
     root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
 
     assert LocalGoogleDriveService(root).list_folders() == []
+
+
+def test_refresh_zip_exports_creates_archives_with_direct_audio_only(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    rock = root / "Rock"
+    empty = root / "Vacía"
+    nested = rock / "Anidada"
+    nested.mkdir(parents=True)
+    empty.mkdir()
+    (rock / "canción.mp3").write_bytes(b"mp3")
+    (rock / "Tema.flac").write_bytes(b"flac")
+    (rock / "cover.jpg").write_bytes(b"image")
+    (nested / "Oculta.ogg").write_bytes(b"nested")
+    service = LocalGoogleDriveService(root)
+
+    assert service.refresh_zip_exports() == ["Rock"]
+
+    rock_zip = service.exports_root / "Rock.zip"
+    assert rock_zip.is_file()
+    assert not (service.exports_root / "Vacía.zip").exists()
+    with zipfile.ZipFile(rock_zip) as archive:
+        assert sorted(archive.namelist()) == ["Tema.flac", "canción.mp3"]
+
+
+def test_refresh_zip_exports_does_not_rewrite_unchanged_archive(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    playlist = root / "Favoritas"
+    playlist.mkdir(parents=True)
+    (playlist / "Tema.mp3").write_bytes(b"audio")
+    service = LocalGoogleDriveService(root)
+    service.refresh_zip_exports()
+    zip_path = service.exports_root / "Favoritas.zip"
+    original_mtime = zip_path.stat().st_mtime_ns
+
+    assert service.refresh_zip_exports() == []
+    assert zip_path.stat().st_mtime_ns == original_mtime
+
+
+def test_refresh_zip_exports_updates_archive_when_audio_is_added(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    playlist = root / "Favoritas"
+    playlist.mkdir(parents=True)
+    (playlist / "Uno.mp3").write_bytes(b"one")
+    service = LocalGoogleDriveService(root)
+    service.refresh_zip_exports()
+    zip_path = service.exports_root / "Favoritas.zip"
+    old_zip_mtime = zip_path.stat().st_mtime
+    new_track = playlist / "Dos.ogg"
+    new_track.write_bytes(b"two")
+    os.utime(new_track, (old_zip_mtime + 2, old_zip_mtime + 2))
+
+    assert service.refresh_zip_exports() == ["Favoritas"]
+    with zipfile.ZipFile(zip_path) as archive:
+        assert sorted(archive.namelist()) == ["Dos.ogg", "Uno.mp3"]
+
+
+def test_refresh_zip_exports_removes_archive_for_emptied_folder(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    playlist = root / "Favoritas"
+    playlist.mkdir(parents=True)
+    track = playlist / "Tema.mp3"
+    track.write_bytes(b"audio")
+    service = LocalGoogleDriveService(root)
+    service.refresh_zip_exports()
+    zip_path = service.exports_root / "Favoritas.zip"
+    track.unlink()
+
+    assert service.refresh_zip_exports() == []
+    assert not zip_path.exists()
+
+
+def test_exports_folder_is_hidden_and_reserved(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    exports = root / EXPORTS_FOLDER_NAME
+    exports.mkdir(parents=True)
+    service = LocalGoogleDriveService(root)
+
+    assert EXPORTS_FOLDER_NAME not in service.list_folders()
+    with pytest.raises(ValueError, match="reservada"):
+        service.resolve_folder(EXPORTS_FOLDER_NAME)
+
+
+@pytest.mark.parametrize(
+    "name", ["../fuera", "..\\fuera", "..", "/absoluta", "C:\\Musica", "CON"]
+)
+def test_zip_path_for_invalid_name_returns_none(name, tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+
+    assert LocalGoogleDriveService(root).zip_path_for(name) is None
+
+
+def test_zip_path_for_returns_none_before_archive_exists(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    (root / "Favoritas").mkdir(parents=True)
+
+    assert LocalGoogleDriveService(root).zip_path_for("Favoritas") is None
+
+
+def test_zip_path_for_returns_existing_archive(tmp_path) -> None:
+    root = tmp_path / "Mi unidad" / "YT-MP3 Studio"
+    playlist = root / "Favoritas"
+    playlist.mkdir(parents=True)
+    (playlist / "Tema.mp3").write_bytes(b"audio")
+    service = LocalGoogleDriveService(root)
+    service.refresh_zip_exports()
+
+    zip_path = service.zip_path_for("Favoritas")
+
+    assert zip_path == service.exports_root / "Favoritas.zip"
+    assert zip_path is not None and zip_path.exists()
 
 
 @pytest.mark.parametrize("name", [None, "", "   "])

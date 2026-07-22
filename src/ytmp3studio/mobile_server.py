@@ -25,7 +25,7 @@ import socket
 import sys
 from threading import Lock, Thread, Timer
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 import webbrowser
 
 from ytmp3studio.backend.adapters.ffmpeg_adapter import FfmpegAdapter
@@ -161,6 +161,11 @@ class MobileBackend:
             return []
         return self.local_drive_service.list_folders()
 
+    def drive_folder_zip(self, name: str) -> Path | None:
+        if not (self.local_drive_service and self.local_drive_service.is_connected()):
+            return None
+        return self.local_drive_service.zip_path_for(name)
+
     def create_drive_folder(self, name: str) -> dict[str, Any]:
         if not name or not name.strip():
             raise ValueError("Escribe un nombre para la carpeta.")
@@ -203,6 +208,11 @@ class MobileBackend:
                 "setup_required": None if local_connected or configured else "google-client-secret.json",
             }
         )
+        for folder in status["folders"]:
+            folder["has_zip"] = bool(
+                local_connected
+                and self.local_drive_service.zip_path_for(folder["name"]) is not None
+            )
         return status
 
     def drive_authorization_url(self) -> str:
@@ -215,15 +225,18 @@ class MobileBackend:
         if validator is not None and not validator(state):
             raise ValueError("La respuesta de Google no coincide con la conexión iniciada.")
         connection = self.drive_service.connect(code)
-        return self._sync_drive(connection.account_email, connection.account_name)
+        self._sync_drive(connection.account_email, connection.account_name)
+        return self.drive_status()
 
     def sync_drive(self) -> dict[str, Any]:
         if self.local_drive_service and self.local_drive_service.is_connected():
-            return self._sync_drive(None, "Google Drive para ordenador")
+            self._sync_drive(None, "Google Drive para ordenador")
+            return self.drive_status()
         if not self.drive_client.is_connected():
             raise ValueError("Conecta primero tu cuenta de Google Drive desde el PC.")
         connection = self.drive_service.connection_state()
-        return self._sync_drive(connection.account_email, connection.account_name)
+        self._sync_drive(connection.account_email, connection.account_name)
+        return self.drive_status()
 
     def _sync_drive(self, account_email: str | None, account_name: str | None) -> dict[str, Any]:
         if not self._drive_sync_lock.acquire(blocking=False):
@@ -361,6 +374,12 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/drive/folders":
                 self._json(HTTPStatus.OK, {"folders": self.server.backend.drive_folder_names()})
+                return
+            if parsed.path.startswith("/api/drive/folders/") and parsed.path.endswith("/zip"):
+                name = unquote(
+                    parsed.path.removeprefix("/api/drive/folders/").removesuffix("/zip").strip("/")
+                )
+                self._send_drive_folder_zip(name)
                 return
             if parsed.path.startswith("/api/drive/folders/") and parsed.path.endswith("/tracks"):
                 folder_id = parsed.path.removeprefix("/api/drive/folders/").removesuffix("/tracks").strip("/")
@@ -608,6 +627,37 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_drive_folder_zip(self, name: str) -> None:
+        path = self.server.backend.drive_folder_zip(name)
+        if path is None or not path.is_file():
+            self._json_error(
+                HTTPStatus.NOT_FOUND,
+                "NOT_FOUND",
+                "No hay ninguna exportación ZIP disponible para esa carpeta.",
+            )
+            return
+        size = path.stat().st_size
+        start, end, partial = _parse_range(self.headers.get("Range"), size)
+        length = end - start + 1
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if partial else HTTPStatus.OK)
+        self._cors_headers()
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with path.open("rb") as archive:
+            archive.seek(start)
+            remaining = length
+            while remaining:
+                chunk = archive.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def log_message(self, format_string: str, *args: Any) -> None:
         logger.info("mobile_api client=%s %s", self.client_address[0], format_string % args)
