@@ -74,6 +74,20 @@
 
     <section class="page" id="page-playlists">
       <div class="hero"><span class="eyebrow">COLECCIONES PERSONALES</span><h1>Playlists</h1><p>Crea listas manuales con la música guardada en este dispositivo.</p></div>
+      <section class="spotify-import" id="spotifyImport" hidden>
+        <div class="spotify-import-head">
+          <div><span class="eyebrow">SPOTIFY · EXPORTIFY · SOLO PC</span><h2>Importar y descargar todas tus canciones</h2><p>Exporta tus playlists, suelta aquí el ZIP o CSV y el PC buscará y descargará cada canción.</p></div>
+          <a class="secondary spotify-open" href="https://exportify.net/" target="_blank" rel="noreferrer">Abrir Exportify</a>
+        </div>
+        <label class="spotify-drop" id="spotifyDrop" for="spotifyFile">
+          <span aria-hidden="true">↓</span>
+          <strong>Suelta aquí spotify_playlists.zip</strong>
+          <small>o pulsa para elegir un ZIP o CSV. Al cargarlo empezará la descarga completa.</small>
+          <input id="spotifyFile" type="file" accept=".zip,.csv,application/zip,text/csv" hidden>
+        </label>
+        <div class="spotify-import-status" id="spotifyImportStatus" role="status">Todavía no has importado ningún archivo en esta sesión.</div>
+        <div class="spotify-server-list" id="spotifyServerList"></div>
+      </section>
       <form class="new-playlist" id="newPlaylistForm"><input id="playlistName" maxlength="80" placeholder="Nombre de la nueva playlist" required><button class="primary" type="submit">Crear</button></form>
       <div class="playlist-list" id="playlistList"></div>
       <section class="empty-state compact" id="emptyPlaylists"><div>≡</div><h2>Aún no hay playlists</h2><p>Crea una lista y añade canciones desde el menú de cada pista.</p></section>
@@ -118,7 +132,7 @@
   </footer>
   <audio id="audio" preload="metadata"></audio>
   <dialog id="trackMenu"><form method="dialog" class="menu"><h2 id="menuTrackTitle">Canción</h2><button value="favorite" id="favoriteAction">Añadir a favoritos</button><label>Añadir a playlist<select id="playlistSelect"></select><button type="button" id="addToPlaylist">Añadir</button></label><button value="delete" class="danger">Eliminar de este dispositivo</button><button value="cancel">Cancelar</button></form></dialog>
-  <dialog id="playlistDialog"><form method="dialog" class="playlist-dialog"><div class="dialog-head"><div><span class="eyebrow">PLAYLIST</span><h2 id="playlistDialogTitle"></h2></div><button value="cancel" class="icon-button">×</button></div><div id="playlistTracks"></div></form></dialog>
+  <dialog id="playlistDialog"><form method="dialog" class="playlist-dialog"><div class="dialog-head"><div><span class="eyebrow">PLAYLIST</span><h2 id="playlistDialogTitle"></h2><small id="playlistDialogCount"></small></div><button value="cancel" class="icon-button" aria-label="Cerrar">×</button></div><div class="playlist-toolbar"><button class="primary" id="playPlaylist" type="button">Reproducir</button><button class="secondary" id="togglePlaylistRename" type="button">Renombrar</button><button class="danger ghost-danger" id="deletePlaylist" type="button">Eliminar</button></div><div class="playlist-rename" id="playlistRename" hidden><label for="playlistRenameInput">Nombre de la playlist</label><div><input id="playlistRenameInput" maxlength="80" autocomplete="off"><button class="primary" id="savePlaylistName" type="button">Guardar</button></div></div><div class="playlist-add"><label for="playlistTrackSelect">Añadir una canción</label><div><select id="playlistTrackSelect"></select><button class="secondary" id="addPlaylistTrack" type="button">Añadir</button></div><small id="playlistAddHint"></small></div><div id="playlistTracks"></div></form></dialog>
   <dialog id="importPlaylistDialog"><form method="dialog" class="menu"><h2>Crear una playlist</h2><p id="importPlaylistSummary"></p><label>Nombre de la playlist<input id="importPlaylistName" type="text" maxlength="80" autocomplete="off" placeholder="Por ejemplo: Rock"></label><button value="create" class="primary" id="importPlaylistCreate">Crear playlist</button><button value="skip">Solo añadir a la biblioteca</button></form></dialog>
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>

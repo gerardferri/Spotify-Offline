@@ -3,6 +3,8 @@ const DB_NAME = 'ytmp3-studio-pwa'; const DB_VERSION = 1;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 let db, tracks = [], activeTrack, currentUrl, playerCoverUrl, selectedTrack, sortNewest = true, toastTimer, coverUrls = [], jobsTimer, driveTimer, driveSnapshot = null;
+let activePlaylistId = null, playbackQueue = [];
+let spotifyServerPlaylists = [], spotifyImportBusy = false;
 let shuffleEnabled = false, repeatMode = 'off';
 const completedJobIds = new Set(); let jobsSeeded = false, pendingImport = [];
 const audio = $('#audio');
@@ -111,11 +113,12 @@ async function createPlaylistFromImport() {
 async function refresh() { tracks = await all('tracks'); tracks.sort((a, b) => sortNewest ? b.createdAt.localeCompare(a.createdAt) : a.title.localeCompare(b.title, 'es')); renderTracks(); await renderPlaylists(); updateStorage(); }
 function cover(track) { if (!track.cover) return '♫'; const url = URL.createObjectURL(track.cover); coverUrls.push(url); return `<img src="${url}" alt="">`; }
 function filteredTracks() { const query = $('#libraryFilter').value.trim().toLocaleLowerCase('es'); return tracks.filter(track => !query || `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase('es').includes(query)); }
-function renderTracks() { coverUrls.forEach(URL.revokeObjectURL); coverUrls = []; const list = $('#trackList'), visible = filteredTracks(); $('#emptyState').hidden = tracks.length !== 0; $('#librarySummary').textContent = tracks.length ? `${tracks.length} pista${tracks.length === 1 ? '' : 's'} guardada${tracks.length === 1 ? '' : 's'} para escuchar sin conexión.` : 'Importa tus archivos de audio para empezar.'; list.innerHTML = visible.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">${cover(track)}</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}${track.album ? ` · ${escape(track.album)}` : ''}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="menu-track" data-id="${track.id}" aria-label="Opciones">⋯</button></div></article>`).join(''); $$('.play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $$('.menu-track').forEach(button => button.onclick = () => openMenu(button.dataset.id)); }
+function renderTracks() { coverUrls.forEach(URL.revokeObjectURL); coverUrls = []; const list = $('#trackList'), visible = filteredTracks(); $('#emptyState').hidden = tracks.length !== 0; $('#librarySummary').textContent = tracks.length ? `${tracks.length} pista${tracks.length === 1 ? '' : 's'} guardada${tracks.length === 1 ? '' : 's'} para escuchar sin conexión.` : 'Importa tus archivos de audio para empezar.'; list.innerHTML = visible.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">${cover(track)}</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}${track.album ? ` · ${escape(track.album)}` : ''}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="menu-track" data-id="${track.id}" aria-label="Opciones">⋯</button></div></article>`).join(''); const queue = visible.map(track => track.id); $$('#trackList .play-track').forEach(button => button.onclick = () => play(button.dataset.id, queue)); $$('#trackList .menu-track').forEach(button => button.onclick = () => openMenu(button.dataset.id)); }
 async function renderPlaylists() { const playlists = await all('playlists'), links = await all('playlistTracks'); const driveFolders = driveSnapshot?.connected ? driveSnapshot.folders || [] : []; $('#emptyPlaylists').hidden = playlists.length + driveFolders.length !== 0; const localMarkup = playlists.sort((a,b) => a.createdAt.localeCompare(b.createdAt)).map(playlist => { const count = links.filter(link => link.playlistId === playlist.id).length; return `<button class="playlist" data-id="${playlist.id}"><span class="playlist-icon">≡</span><span><strong>${escape(playlist.name)}</strong><small>${songs(count)}</small></span></button>`; }).join(''); const driveMarkup = driveFolders.map(folder => `<button class="playlist drive-playlist" data-drive-folder-id="${escape(folder.id)}"><span class="playlist-icon drive-playlist-icon">D</span><span><strong>${escape(folder.name)}</strong><small>${songs(Number(folder.track_count || 0))} · Google Drive</small></span><span class="remote-pill">Nube</span></button>`).join(''); $('#playlistList').innerHTML = localMarkup + driveMarkup; $$('.playlist[data-id]').forEach(button => button.onclick = () => openPlaylist(button.dataset.id)); $$('.drive-playlist').forEach(button => button.onclick = () => focusDriveFolder(button.dataset.driveFolderId)); }
-async function play(trackId) {
+async function play(trackId, queue = null) {
   const track = tracks.find(item => item.id === trackId);
   if (!track) return;
+  if (Array.isArray(queue)) playbackQueue = [...new Set(queue)].filter(id => tracks.some(item => item.id === id));
   if (activeTrack?.id === trackId) {
     audio.paused ? audio.play() : audio.pause();
     return;
@@ -147,45 +150,54 @@ function updateMediaSession() {
   navigator.mediaSession.setActionHandler('seekto', details => seekTo(details.seekTime));
 }
 
+function playbackTracks() {
+  if (!playbackQueue.length) return tracks;
+  const queued = playbackQueue.map(trackId => tracks.find(track => track.id === trackId)).filter(Boolean);
+  return queued.length ? queued : tracks;
+}
+
 function randomTrack() {
-  if (tracks.length < 2) return tracks[0];
-  const candidates = tracks.filter(track => track.id !== activeTrack?.id);
+  const queue = playbackTracks();
+  if (queue.length < 2) return queue[0];
+  const candidates = queue.filter(track => track.id !== activeTrack?.id);
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 function next(fromEnded = false) {
-  if (!activeTrack || !tracks.length) return;
+  const queue = playbackTracks();
+  if (!activeTrack || !queue.length) return;
   if (fromEnded && repeatMode === 'one') {
     audio.currentTime = 0;
     audio.play();
     return;
   }
   if (shuffleEnabled) {
-    play(randomTrack().id);
+    play(randomTrack().id, queue.map(track => track.id));
     return;
   }
-  const index = tracks.findIndex(track => track.id === activeTrack.id);
-  const atEnd = index === tracks.length - 1;
+  const index = queue.findIndex(track => track.id === activeTrack.id);
+  const atEnd = index === queue.length - 1;
   if (fromEnded && atEnd && repeatMode === 'off') {
     audio.currentTime = 0;
     updateProgress();
     return;
   }
-  play(tracks[(index + 1) % tracks.length].id);
+  play(queue[(index + 1) % queue.length].id, queue.map(track => track.id));
 }
 
 function previous() {
-  if (!activeTrack || !tracks.length) return;
+  const queue = playbackTracks();
+  if (!activeTrack || !queue.length) return;
   if (audio.currentTime > 3) {
     seekTo(0);
     return;
   }
   if (shuffleEnabled) {
-    play(randomTrack().id);
+    play(randomTrack().id, queue.map(track => track.id));
     return;
   }
-  const index = tracks.findIndex(track => track.id === activeTrack.id);
-  play(tracks[(index - 1 + tracks.length) % tracks.length].id);
+  const index = queue.findIndex(track => track.id === activeTrack.id);
+  play(queue[(index - 1 + queue.length) % queue.length].id, queue.map(track => track.id));
 }
 
 function seekTo(seconds) {
@@ -226,23 +238,180 @@ function toggleRepeat() {
   $('#repeatCount').hidden = repeatMode !== 'one';
 }
 async function openMenu(trackId) { selectedTrack = tracks.find(track => track.id === trackId); if (!selectedTrack) return; $('#menuTrackTitle').textContent = selectedTrack.title; $('#favoriteAction').textContent = selectedTrack.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'; const playlists = await all('playlists'); $('#playlistSelect').innerHTML = playlists.length ? playlists.map(item => `<option value="${item.id}">${escape(item.name)}</option>`).join('') : '<option value="">Crea primero una playlist</option>'; $('#addToPlaylist').disabled = !playlists.length; $('#trackMenu').showModal(); }
-async function addToPlaylist() { const playlistId = $('#playlistSelect').value; if (!playlistId || !selectedTrack) return; await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId: selectedTrack.id, addedAt: new Date().toISOString() })); $('#trackMenu').close(); await renderPlaylists(); showToast('Añadida a la playlist.'); }
+async function addToPlaylist() { const playlistId = $('#playlistSelect').value; if (!playlistId || !selectedTrack) return; const existing = await requestAsPromise(tx('playlistTracks').get([playlistId, selectedTrack.id])); if (existing) { $('#trackMenu').close(); showToast('Esta canción ya estaba en la playlist.'); return; } await requestAsPromise(tx('playlistTracks', 'readwrite').add({ playlistId, trackId: selectedTrack.id, addedAt: new Date().toISOString() })); $('#trackMenu').close(); await renderPlaylists(); showToast('Añadida a la playlist.'); }
 async function toggleFavorite() { if (!selectedTrack) return; selectedTrack.favorite = !selectedTrack.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(selectedTrack)); $('#trackMenu').close(); await refresh(); }
 async function deleteTrack() { if (!selectedTrack || !confirm(`¿Eliminar “${selectedTrack.title}” de este dispositivo?`)) return; const transaction = db.transaction(['tracks', 'playlistTracks'], 'readwrite'); transaction.objectStore('tracks').delete(selectedTrack.id); const links = await requestAsPromise(transaction.objectStore('playlistTracks').getAll()); links.filter(link => link.trackId === selectedTrack.id).forEach(link => transaction.objectStore('playlistTracks').delete([link.playlistId, link.trackId])); await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); $('#trackMenu').close(); if (activeTrack?.id === selectedTrack.id) { audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; activeTrack = null; document.title = 'YT-MP3 Studio · Biblioteca offline'; } await refresh(); showToast('Pista eliminada.'); }
-async function openPlaylist(playlistId) { const playlists = await all('playlists'); const playlist = playlists.find(item => item.id === playlistId); const links = await all('playlistTracks'); const list = links.filter(link => link.playlistId === playlistId).map(link => tracks.find(track => track.id === link.trackId)).filter(Boolean); $('#playlistDialogTitle').textContent = playlist.name; $('#playlistTracks').innerHTML = list.length ? list.map(track => `<article class="track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">♫</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}</small></div><button class="play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">▶</button></article>`).join('') : '<p class="empty-state compact">Esta playlist está vacía.</p>'; $$('#playlistTracks .play-track').forEach(button => button.onclick = () => play(button.dataset.id)); $('#playlistDialog').showModal(); }
-async function createPlaylist(event) { event.preventDefault(); const name = $('#playlistName').value.trim(); if (!name) return; await requestAsPromise(tx('playlists', 'readwrite').put({ id: id(), name, createdAt: new Date().toISOString() })); event.target.reset(); await renderPlaylists(); showToast('Playlist creada.'); }
+async function playlistSnapshot(playlistId) {
+  const playlists = await all('playlists');
+  const playlist = playlists.find(item => item.id === playlistId);
+  if (!playlist) return null;
+  const links = (await all('playlistTracks')).filter(link => link.playlistId === playlistId).sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+  const list = links.map(link => tracks.find(track => track.id === link.trackId)).filter(Boolean);
+  return { playlist, links, list };
+}
+
+async function renderOpenPlaylist() {
+  const snapshot = await playlistSnapshot(activePlaylistId);
+  if (!snapshot) { $('#playlistDialog').close(); activePlaylistId = null; return; }
+  const { playlist, list } = snapshot;
+  const queue = list.map(track => track.id);
+  $('#playlistDialogTitle').textContent = playlist.name;
+  $('#playlistDialogCount').textContent = songs(list.length);
+  $('#playlistRenameInput').value = playlist.name;
+  $('#playPlaylist').disabled = !list.length;
+  const memberIds = new Set(queue);
+  const available = tracks.filter(track => !memberIds.has(track.id));
+  $('#playlistTrackSelect').innerHTML = available.length ? available.map(track => `<option value="${track.id}">${escape(track.title)} — ${escape(track.artist)}</option>`).join('') : '<option value="">No quedan canciones por añadir</option>';
+  $('#addPlaylistTrack').disabled = !available.length;
+  $('#playlistAddHint').textContent = tracks.length ? (available.length ? `${songs(available.length)} disponibles.` : 'Todas las canciones de tu biblioteca ya están aquí.') : 'Importa música en Biblioteca para poder añadirla.';
+  $('#playlistTracks').innerHTML = list.length ? list.map(track => `<article class="track playlist-track"><button class="cover play-track" data-id="${track.id}" aria-label="Reproducir ${escape(track.title)}">♫</button><div class="track-main"><strong>${escape(track.title)}</strong><small>${escape(track.artist)}</small></div><div class="track-actions"><button class="play-track" data-id="${track.id}" aria-label="Reproducir">▶</button><button class="remove-playlist-track" data-id="${track.id}" aria-label="Quitar ${escape(track.title)} de la playlist" title="Quitar de la playlist">×</button></div></article>`).join('') : '<div class="empty-state compact playlist-empty"><h2>Esta playlist está vacía</h2><p>Añade una canción con el selector de arriba.</p></div>';
+  $$('#playlistTracks .play-track').forEach(button => button.onclick = () => play(button.dataset.id, queue));
+  $$('#playlistTracks .remove-playlist-track').forEach(button => button.onclick = () => removeTrackFromPlaylist(button.dataset.id));
+}
+
+async function openPlaylist(playlistId) {
+  activePlaylistId = playlistId;
+  $('#playlistRename').hidden = true;
+  await renderOpenPlaylist();
+  if (activePlaylistId && !$('#playlistDialog').open) $('#playlistDialog').showModal();
+}
+
+async function addTrackToOpenPlaylist() {
+  const trackId = $('#playlistTrackSelect').value;
+  if (!activePlaylistId || !trackId) return;
+  await requestAsPromise(tx('playlistTracks', 'readwrite').add({ playlistId: activePlaylistId, trackId, addedAt: new Date().toISOString() }));
+  await renderOpenPlaylist(); await renderPlaylists();
+  showToast('Canción añadida.');
+}
+
+async function removeTrackFromPlaylist(trackId) {
+  if (!activePlaylistId) return;
+  await requestAsPromise(tx('playlistTracks', 'readwrite').delete([activePlaylistId, trackId]));
+  playbackQueue = playbackQueue.filter(id => id !== trackId);
+  await renderOpenPlaylist(); await renderPlaylists();
+  showToast('Canción quitada de la playlist.');
+}
+
+async function renameOpenPlaylist() {
+  if (!activePlaylistId) return;
+  const name = $('#playlistRenameInput').value.trim();
+  if (!name) { showToast('Escribe un nombre para la playlist.'); return; }
+  const playlists = await all('playlists');
+  if (playlists.some(item => item.id !== activePlaylistId && item.name.trim().toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) { showToast('Ya existe una playlist con ese nombre.'); return; }
+  const playlist = playlists.find(item => item.id === activePlaylistId);
+  if (!playlist) return;
+  await requestAsPromise(tx('playlists', 'readwrite').put({ ...playlist, name, updatedAt: new Date().toISOString() }));
+  $('#playlistRename').hidden = true;
+  await renderOpenPlaylist(); await renderPlaylists();
+  showToast('Playlist renombrada.');
+}
+
+async function deleteOpenPlaylist() {
+  if (!activePlaylistId) return;
+  const snapshot = await playlistSnapshot(activePlaylistId);
+  if (!snapshot || !confirm(`¿Eliminar la playlist “${snapshot.playlist.name}”? Las canciones seguirán en tu biblioteca.`)) return;
+  const playlistId = activePlaylistId;
+  const transaction = db.transaction(['playlists', 'playlistTracks'], 'readwrite');
+  transaction.objectStore('playlists').delete(playlistId);
+  snapshot.links.forEach(link => transaction.objectStore('playlistTracks').delete([playlistId, link.trackId]));
+  await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); transaction.onabort = () => reject(transaction.error); });
+  activePlaylistId = null;
+  playbackQueue = [];
+  $('#playlistDialog').close();
+  await renderPlaylists();
+  showToast('Playlist eliminada. Tus canciones siguen en la biblioteca.');
+}
+
+async function playOpenPlaylist() {
+  const snapshot = await playlistSnapshot(activePlaylistId);
+  if (!snapshot?.list.length) return;
+  const queue = snapshot.list.map(track => track.id);
+  $('#playlistDialog').close();
+  play(queue[0], queue);
+}
+
+async function createPlaylist(event) { event.preventDefault(); const name = $('#playlistName').value.trim(); if (!name) return; const playlists = await all('playlists'); if (playlists.some(item => item.name.trim().toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) { showToast('Ya existe una playlist con ese nombre.'); return; } const now = new Date().toISOString(); await requestAsPromise(tx('playlists', 'readwrite').put({ id: id(), name, createdAt: now, updatedAt: now })); event.target.reset(); await renderPlaylists(); showToast('Playlist creada.'); }
 async function exportBackup() { const library = await all('tracks'), playlists = await all('playlists'), links = await all('playlistTracks'); const backup = { version: 1, exportedAt: new Date().toISOString(), tracks: library.map(({ blob, cover, ...track }) => track), playlists, playlistTracks: links.map(link => ({ playlistId: link.playlistId, fingerprint: library.find(track => track.id === link.trackId)?.fingerprint })).filter(link => link.fingerprint) }; const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })); const link = Object.assign(document.createElement('a'), { href: url, download: `ytmp3-studio-backup-${new Date().toISOString().slice(0,10)}.json` }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); showToast('Copia exportada. Los audios no se incluyen.'); }
 async function restoreBackup(file) { try { const backup = JSON.parse(await file.text()); if (backup.version !== 1 || !Array.isArray(backup.playlists)) throw new Error('Formato no válido'); const current = await all('tracks'); const byFingerprint = new Map(current.map(track => [track.fingerprint, track.id])); const playlistById = new Map(); for (const playlist of backup.playlists) { const newId = id(); playlistById.set(playlist.id, newId); await requestAsPromise(tx('playlists', 'readwrite').put({ id: newId, name: playlist.name, createdAt: playlist.createdAt || new Date().toISOString() })); } let matched = 0; for (const link of backup.playlistTracks || []) { const trackId = byFingerprint.get(link.fingerprint), playlistId = playlistById.get(link.playlistId); if (trackId && playlistId) { await requestAsPromise(tx('playlistTracks', 'readwrite').put({ playlistId, trackId, addedAt: new Date().toISOString() })); matched++; } } for (const saved of backup.tracks || []) { const existing = current.find(track => track.fingerprint === saved.fingerprint); if (existing && typeof saved.favorite === 'boolean') { existing.favorite = saved.favorite; await requestAsPromise(tx('tracks', 'readwrite').put(existing)); } } await refresh(); showToast(`Copia restaurada: ${matched} pistas asociadas.`); } catch (error) { showToast('No se pudo leer esa copia de seguridad.'); console.error(error); } finally { $('#restoreInput').value = ''; } }
 async function updateStorage() { const ownBytes = tracks.reduce((total, track) => total + (track.size || 0), 0); let suffix = `Música guardada: ${formatBytes(ownBytes)}.`; if (navigator.storage?.estimate) { const estimate = await navigator.storage.estimate(); suffix += ` Espacio del sitio: ${formatBytes(estimate.usage)} de ${formatBytes(estimate.quota)}.`; } $('#storageUsage').textContent = suffix; }
 async function clearLibrary() { if (!confirm('¿Borrar todas las pistas, playlists y datos guardados en este dispositivo? Esta acción no se puede deshacer.')) return; db.close(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); db = await openDb(); activeTrack = null; audio.pause(); if (currentUrl) URL.revokeObjectURL(currentUrl); if (playerCoverUrl) URL.revokeObjectURL(playerCoverUrl); currentUrl = null; playerCoverUrl = null; $('#player').hidden = true; document.title = 'YT-MP3 Studio · Biblioteca offline'; await refresh(); showToast('Biblioteca borrada.'); }
 
-function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'search' && PC_HOSTED) loadDownloadFolders(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+function setSpotifyImportBusy(busy) {
+  spotifyImportBusy = busy;
+  $('#spotifyFile').disabled = busy;
+  $$('#spotifyServerList button').forEach(button => { button.disabled = busy; });
+  $('#spotifyDrop').classList.toggle('is-busy', busy);
+}
+
+function renderSpotifyServerPlaylists() {
+  const list = $('#spotifyServerList');
+  if (!spotifyServerPlaylists.length) { list.innerHTML = ''; return; }
+  list.innerHTML = spotifyServerPlaylists.map(playlist => `<article class="spotify-server-playlist"><span class="spotify-logo" aria-hidden="true">♫</span><div><strong>${escape(playlist.name)}</strong><small>${songs(Number(playlist.track_count || 0))}${playlist.last_synced_at ? ' · sincronizada' : ''}</small></div><div class="spotify-playlist-actions"><button class="primary spotify-action" data-id="${escape(playlist.id)}" data-action="download" type="button">Descargar</button><button class="secondary spotify-action" data-id="${escape(playlist.id)}" data-action="retry" type="button">Reintentar</button><button class="quiet-button spotify-action" data-id="${escape(playlist.id)}" data-action="stop" type="button">Detener</button></div></article>`).join('');
+  $$('.spotify-action').forEach(button => button.onclick = () => runSpotifyPlaylistAction(button));
+  if (spotifyImportBusy) setSpotifyImportBusy(true);
+}
+
+async function loadSpotifyPlaylists({ quiet = false } = {}) {
+  if (!PC_LOOPBACK) return;
+  try {
+    const payload = await (await api('/api/playlists')).json();
+    spotifyServerPlaylists = Array.isArray(payload.playlists) ? payload.playlists : [];
+    renderSpotifyServerPlaylists();
+    if (!quiet && spotifyServerPlaylists.length) $('#spotifyImportStatus').textContent = `${spotifyServerPlaylists.length} playlist${spotifyServerPlaylists.length === 1 ? '' : 's'} de Spotify preparadas en el PC.`;
+  } catch (error) {
+    if (!quiet) $('#spotifyImportStatus').textContent = error.message;
+  }
+}
+
+async function importSpotifyFile(file) {
+  if (!file || spotifyImportBusy) return;
+  if (!/\.(zip|csv)$/i.test(file.name)) { showToast('Selecciona el ZIP o CSV descargado de Exportify.'); return; }
+  setSpotifyImportBusy(true);
+  $('#spotifyImportStatus').textContent = `Importando “${file.name}”…`;
+  try {
+    const response = await api(`/api/playlists/import?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } });
+    const payload = await response.json();
+    spotifyServerPlaylists = Array.isArray(payload.playlists) ? payload.playlists : [];
+    renderSpotifyServerPlaylists();
+    const total = spotifyServerPlaylists.reduce((sum, playlist) => sum + Number(playlist.track_count || 0), 0);
+    $('#spotifyImportStatus').textContent = `${spotifyServerPlaylists.length} playlists y ${songs(total)} importadas. Buscando versiones fiables y preparando las descargas…`;
+    const queued = await (await api('/api/playlists/download-all', { method: 'POST' })).json();
+    $('#spotifyImportStatus').textContent = `${songs(Number(queued.queued || 0))} enviadas a Descargas${queued.failed ? ` · ${queued.failed} sin coincidencia fiable` : ''}${queued.skipped ? ` · ${queued.skipped} ya estaban listas` : ''}.`;
+    showToast('La descarga masiva ya está en marcha.');
+    loadJobs();
+  } catch (error) {
+    $('#spotifyImportStatus').textContent = error.message;
+    showToast('No se pudo iniciar la importación de Spotify.');
+  } finally {
+    $('#spotifyFile').value = '';
+    setSpotifyImportBusy(false);
+    await loadSpotifyPlaylists({ quiet: true });
+  }
+}
+
+async function runSpotifyPlaylistAction(button) {
+  if (spotifyImportBusy) return;
+  setSpotifyImportBusy(true);
+  const labels = { download: 'Preparando la playlist…', retry: 'Reintentando canciones fallidas…', stop: 'Deteniendo descargas…' };
+  $('#spotifyImportStatus').textContent = labels[button.dataset.action];
+  try {
+    const result = await (await api(`/api/playlists/${encodeURIComponent(button.dataset.id)}/${button.dataset.action}`, { method: 'POST' })).json();
+    $('#spotifyImportStatus').textContent = button.dataset.action === 'stop'
+      ? `${Number(result.stopped || 0)} descargas detenidas.`
+      : `${songs(Number(result.queued || 0))} enviadas a Descargas${result.failed ? ` · ${result.failed} sin coincidencia fiable` : ''}.`;
+    loadJobs();
+  } catch (error) { $('#spotifyImportStatus').textContent = error.message; }
+  finally { setSpotifyImportBusy(false); await loadSpotifyPlaylists({ quiet: true }); }
+}
+
+function navigate(pageName) { $$('.nav-item').forEach(item => { const active = item.dataset.page === pageName; item.classList.toggle('is-active', active); if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current'); }); $$('.page').forEach(page => page.classList.toggle('is-visible', page.id === `page-${pageName}`)); if (pageName === 'downloads') loadJobs(); if (pageName === 'playlists' && PC_LOOPBACK) loadSpotifyPlaylists({ quiet: true }); if (pageName === 'search' && PC_HOSTED) loadDownloadFolders(); if (pageName === 'library' && driveSnapshot) loadDriveStatus({ quiet: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 // Cuando la web la sirve el PC (localhost o su IP privada de la WiFi) las
 // peticiones van a su mismo origen y no hacen falta dirección ni clave. Servida
 // desde un alojamiento estático (GitHub Pages) no hay PC detrás: la aplicación
 // pasa a modo reproductor y oculta lo que dependería de él.
 const PC_HOSTED = ['localhost', '127.0.0.1'].includes(location.hostname)
   || /^(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)$/.test(location.hostname);
+const PC_LOOPBACK = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
 
 function applyPlayerOnlyMode() {
   $$('.nav-item').forEach(item => { if (['search', 'downloads'].includes(item.dataset.page)) item.hidden = true; });
@@ -461,6 +630,19 @@ function bind() {
   $('#libraryFilter').oninput = renderTracks;
   $('#sortButton').onclick = () => { sortNewest = !sortNewest; $('#sortButton').textContent = sortNewest ? 'Recientes' : 'A–Z'; $('#sortButton').setAttribute('aria-pressed', String(sortNewest)); refresh(); };
   $('#newPlaylistForm').onsubmit = createPlaylist;
+  if (PC_LOOPBACK) {
+    $('#spotifyImport').hidden = false;
+    $('#spotifyFile').onchange = event => importSpotifyFile(event.target.files[0]);
+    for (const eventName of ['dragenter', 'dragover']) $('#spotifyDrop').addEventListener(eventName, event => { event.preventDefault(); $('#spotifyDrop').classList.add('is-dragging'); });
+    for (const eventName of ['dragleave', 'drop']) $('#spotifyDrop').addEventListener(eventName, event => { event.preventDefault(); $('#spotifyDrop').classList.remove('is-dragging'); });
+    $('#spotifyDrop').addEventListener('drop', event => importSpotifyFile(event.dataTransfer.files[0]));
+  }
+  $('#playPlaylist').onclick = playOpenPlaylist;
+  $('#togglePlaylistRename').onclick = () => { $('#playlistRename').hidden = !$('#playlistRename').hidden; if (!$('#playlistRename').hidden) $('#playlistRenameInput').focus(); };
+  $('#savePlaylistName').onclick = renameOpenPlaylist;
+  $('#playlistRenameInput').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); renameOpenPlaylist(); } };
+  $('#addPlaylistTrack').onclick = addTrackToOpenPlaylist;
+  $('#deletePlaylist').onclick = deleteOpenPlaylist;
   $('#backupButton').onclick = exportBackup;
   $('#restoreInput').onchange = event => event.target.files[0] && restoreBackup(event.target.files[0]);
   $('#addToPlaylist').onclick = addToPlaylist;
@@ -510,6 +692,7 @@ async function init() {
     navigate('library');
   } else {
     await updateServerBanner();
+    if (PC_LOOPBACK) await loadSpotifyPlaylists({ quiet: true });
     const driveCallback = new URLSearchParams(location.search).get('drive') === 'connected';
     await loadDriveStatus({ autoSync: true });
     if (driveCallback) { const cleanUrl = new URL(location.href); cleanUrl.searchParams.delete('drive'); history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`); showToast('Google Drive conectado.'); }

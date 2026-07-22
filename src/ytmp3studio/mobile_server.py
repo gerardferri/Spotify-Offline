@@ -23,6 +23,7 @@ from pathlib import Path
 import secrets
 import socket
 import sys
+import tempfile
 from threading import Lock, Thread, Timer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -44,6 +45,7 @@ from ytmp3studio.backend.local_drive_service import (
 )
 from ytmp3studio.backend.queue_service import QueueService
 from ytmp3studio.backend.search_service import SearchService
+from ytmp3studio.backend.playlist_service import PlaylistService
 from ytmp3studio.domain.errors import AppError, ErrorCode
 from ytmp3studio.domain.models import LibraryTrack, default_download_dir
 from ytmp3studio.persistence.database import Database
@@ -54,11 +56,13 @@ from ytmp3studio.persistence.repositories import (
     LibraryRepository,
     SettingsRepository,
 )
+from ytmp3studio.persistence.playlist_repository import PlaylistRepository
 
 
 logger = logging.getLogger("ytmp3studio.mobile_server")
 DEFAULT_ORIGIN = "https://gerardferri.github.io"
 MAX_BODY_BYTES = 64 * 1024
+MAX_EXPORTIFY_BODY_BYTES = 210 * 1024 * 1024
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PWA_DIRECTORY = PROJECT_ROOT / "prototype"
 
@@ -81,6 +85,7 @@ class MobileBackend:
         self.library = LibraryRepository(self.database)
         self.settings = SettingsRepository(self.database)
         self.history = HistoryRepository(self.database)
+        self.playlists_repository = PlaylistRepository(self.database)
         drive_data = user_data_dir()
         self.drive_client = drive_client or GoogleDriveClient(
             google_client_path or drive_data / "google-client-secret.json",
@@ -104,6 +109,16 @@ class MobileBackend:
             self.history,
             self.provider,
             self.settings.get,
+        )
+        self.playlists = PlaylistService(
+            self.playlists_repository,
+            self.library,
+            self.search_service,
+            self.queue,
+            self.settings.get,
+        )
+        self.queue.set_callbacks(
+            on_updated=self._on_job_updated,
             on_completed=self._on_download_completed,
         )
         self.queue.start(recover=True)
@@ -128,12 +143,57 @@ class MobileBackend:
     def download_dir(self) -> str:
         return str(Path(self.settings.get_value("download_dir", default_download_dir())))
 
-    def _on_download_completed(self, _job: Any, _track: LibraryTrack) -> None:
+    def _on_job_updated(self, job: Any) -> None:
+        try:
+            self.playlists.on_job_updated(job)
+        except Exception:  # noqa: BLE001 - queue callbacks must remain isolated
+            logger.exception("No se pudo actualizar el estado de la playlist.")
+
+    def _on_download_completed(self, job: Any, track: LibraryTrack) -> None:
         """Refresh the Drive catalog so the new song shows up as a playlist track."""
+
+        try:
+            self.playlists.on_job_completed(job, track)
+        except Exception:  # noqa: BLE001 - a projection failure must not stop the queue
+            logger.exception("No se pudo finalizar la canción de la playlist.")
 
         if not (self.local_drive_service and self.local_drive_service.is_connected()):
             return
         Thread(target=self._sync_drive_quietly, daemon=True).start()
+
+    def import_exportify(self, filename: str, data: bytes) -> list[dict[str, Any]]:
+        safe_name = Path(filename).name
+        suffix = Path(safe_name).suffix.casefold()
+        if suffix not in {".zip", ".csv"}:
+            raise ValueError("Selecciona un ZIP o CSV descargado de Exportify.")
+        with tempfile.TemporaryDirectory(prefix="ytmp3studio-exportify-") as temporary:
+            temporary_path = Path(temporary) / safe_name
+            temporary_path.write_bytes(data)
+            return self.playlists.import_exportify(str(temporary_path))
+
+    def list_playlists(self) -> list[dict[str, Any]]:
+        return self.playlists.list_playlists()
+
+    def get_playlist(self, playlist_id: str) -> dict[str, Any]:
+        return self.playlists.get_playlist(playlist_id)
+
+    def download_playlist(self, playlist_id: str) -> dict[str, int]:
+        return self.playlists.download_playlist(playlist_id)
+
+    def download_all_playlists(self) -> dict[str, int]:
+        totals = {"playlists": 0, "queued": 0, "failed": 0, "skipped": 0}
+        for playlist in self.playlists.list_playlists():
+            result = self.playlists.download_playlist(playlist["id"])
+            totals["playlists"] += 1
+            for key in ("queued", "failed", "skipped"):
+                totals[key] += int(result.get(key, 0))
+        return totals
+
+    def retry_playlist(self, playlist_id: str) -> dict[str, int]:
+        return self.playlists.retry_failures(playlist_id)
+
+    def stop_playlist(self, playlist_id: str) -> dict[str, int]:
+        return self.playlists.stop_downloads(playlist_id)
 
     def _sync_drive_quietly(self) -> None:
         try:
@@ -359,6 +419,19 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/jobs":
                 self._json(HTTPStatus.OK, {"jobs": self.server.backend.queue_snapshot()})
                 return
+            if parsed.path == "/api/playlists":
+                if not self._require_pc_web_request():
+                    return
+                self._json(HTTPStatus.OK, {"playlists": self.server.backend.list_playlists()})
+                return
+            if parsed.path.startswith("/api/playlists/"):
+                if not self._require_pc_web_request():
+                    return
+                playlist_id = unquote(parsed.path.removeprefix("/api/playlists/").strip("/"))
+                if not playlist_id or "/" in playlist_id:
+                    raise ValueError("La playlist no es válida.")
+                self._json(HTTPStatus.OK, {"playlist": self.server.backend.get_playlist(playlist_id)})
+                return
             if parsed.path == "/api/drive/status":
                 self._json(HTTPStatus.OK, {"drive": self.server.backend.drive_status()})
                 return
@@ -414,6 +487,38 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
             return
         parsed = urlsplit(self.path)
         try:
+            if parsed.path == "/api/playlists/import":
+                if not self._require_pc_web_request():
+                    return
+                params = parse_qs(parsed.query)
+                filename = Path(unquote(params.get("filename", [""])[0])).name
+                if not filename:
+                    raise ValueError("El archivo no tiene nombre.")
+                data = self._read_body(MAX_EXPORTIFY_BODY_BYTES)
+                playlists = self.server.backend.import_exportify(filename, data)
+                self._json(HTTPStatus.OK, {"playlists": playlists})
+                return
+            if parsed.path == "/api/playlists/download-all":
+                if not self._require_pc_web_request():
+                    return
+                self._json(HTTPStatus.ACCEPTED, self.server.backend.download_all_playlists())
+                return
+            if parsed.path.startswith("/api/playlists/"):
+                if not self._require_pc_web_request():
+                    return
+                relative = parsed.path.removeprefix("/api/playlists/").strip("/")
+                playlist_id, separator, action = relative.rpartition("/")
+                playlist_id = unquote(playlist_id)
+                if not separator or not playlist_id or action not in {"download", "retry", "stop"}:
+                    self._json_error(HTTPStatus.NOT_FOUND, "NOT_FOUND", "Ruta no encontrada.")
+                    return
+                command = {
+                    "download": self.server.backend.download_playlist,
+                    "retry": self.server.backend.retry_playlist,
+                    "stop": self.server.backend.stop_playlist,
+                }[action]
+                self._json(HTTPStatus.ACCEPTED, command(playlist_id))
+                return
             if parsed.path == "/api/jobs":
                 payload = self._read_json()
                 video_id = str(payload.get("video_id", "")).strip()
@@ -491,6 +596,26 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin", "").rstrip("/")
         return not origin or origin == f"http://{host}"
 
+    def _is_pc_web_request(self) -> bool:
+        if not self._is_local_web_request():
+            return False
+        host = self.headers.get("Host", "").lower()
+        hostname, _, port_text = host.rpartition(":")
+        hostname = hostname or host
+        if port_text and port_text != str(self.server.server_port):
+            return False
+        return hostname in {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+    def _require_pc_web_request(self) -> bool:
+        if self._is_pc_web_request():
+            return True
+        self._json_error(
+            HTTPStatus.FORBIDDEN,
+            "PC_ONLY",
+            "La importación de Spotify solo está disponible en la web local del PC.",
+        )
+        return False
+
     def _origin_allowed(self) -> bool:
         origin = self.headers.get("Origin")
         if not origin:
@@ -549,6 +674,20 @@ class MobileRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise ValueError("Se esperaba un objeto JSON.")
         return payload
+
+    def _read_body(self, maximum: int) -> bytes:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Content-Length no válido") from exc
+        if length <= 0:
+            raise ValueError("El archivo está vacío.")
+        if length > maximum:
+            raise ValueError("El archivo de Exportify supera el límite de 210 MB.")
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ValueError("El archivo recibido está incompleto.")
+        return data
 
     def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

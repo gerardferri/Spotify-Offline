@@ -10,6 +10,7 @@ import pytest
 
 from ytmp3studio.domain.models import LibraryTrack
 from ytmp3studio.mobile_server import (
+    MobileBackend,
     MobileApiServer,
     _is_private_lan_host,
     _parse_range,
@@ -107,6 +108,28 @@ class FakeBackend:
         assert file_id == "drive-track"
         return b"drive-audio", {"Content-Type": "audio/mpeg"}, 200
 
+    def list_playlists(self):
+        return [{"id": "playlist-1", "name": "Favoritas", "track_count": 1}]
+
+    def get_playlist(self, playlist_id):
+        return {**self.list_playlists()[0], "id": playlist_id, "tracks": []}
+
+    def import_exportify(self, filename, data):
+        self.imported_exportify = (filename, data)
+        return self.list_playlists()
+
+    def download_playlist(self, _playlist_id):
+        return {"queued": 1, "failed": 0, "skipped": 0}
+
+    def download_all_playlists(self):
+        return {"playlists": 1, "queued": 1, "failed": 0, "skipped": 0}
+
+    def retry_playlist(self, _playlist_id):
+        return {"queued": 1, "failed": 0, "skipped": 0}
+
+    def stop_playlist(self, _playlist_id):
+        return {"stopped": 1, "already_finished": 0}
+
 
 @pytest.fixture
 def api(tmp_path):
@@ -128,21 +151,50 @@ def api(tmp_path):
         thread.join(timeout=2)
 
 
-def request(api, method: str, path: str, *, token: str | None = TOKEN, body=None, headers=None):
+def request(
+    api,
+    method: str,
+    path: str,
+    *,
+    token: str | None = TOKEN,
+    body=None,
+    raw_body: bytes | None = None,
+    headers=None,
+):
     connection = HTTPConnection(*api, timeout=3)
     request_headers = {"Origin": ORIGIN, **(headers or {})}
     if token:
         request_headers["Authorization"] = f"Bearer {token}"
-    encoded = None
+    encoded = raw_body
     if body is not None:
         encoded = json.dumps(body).encode()
         request_headers["Content-Type"] = "application/json"
+        request_headers["Content-Length"] = str(len(encoded))
+    elif raw_body is not None:
+        request_headers.setdefault("Content-Type", "application/octet-stream")
         request_headers["Content-Length"] = str(len(encoded))
     connection.request(method, path, body=encoded, headers=request_headers)
     response = connection.getresponse()
     data = response.read()
     connection.close()
     return response, data
+
+
+def test_exportify_temporary_file_preserves_the_uploaded_csv_name() -> None:
+    observed = {}
+
+    class Playlists:
+        def import_exportify(self, path):
+            source = Path(path)
+            observed["name"] = source.name
+            observed["data"] = source.read_bytes()
+            return []
+
+    backend = MobileBackend.__new__(MobileBackend)
+    backend.playlists = Playlists()
+
+    assert backend.import_exportify("Liked Songs.csv", b"csv-data") == []
+    assert observed == {"name": "Liked Songs.csv", "data": b"csv-data"}
 
 
 def test_health_requires_token_and_allows_configured_origin(api):
@@ -363,6 +415,37 @@ def test_local_web_serves_pwa_and_allows_only_its_same_origin_without_token(tmp_
         assert connect.status == 200
         assert json.loads(payload)["authorization_url"].startswith("https://accounts.google.test/")
 
+        playlists, payload = request(
+            server.server_address,
+            "GET",
+            "/api/playlists",
+            token=None,
+            headers={"Origin": local_origin},
+        )
+        assert playlists.status == 200
+        assert json.loads(payload)["playlists"][0]["name"] == "Favoritas"
+
+        imported, payload = request(
+            server.server_address,
+            "POST",
+            "/api/playlists/import?filename=Liked%20Songs.csv",
+            token=None,
+            raw_body=b"Track URI,Track Name\nspotify:track:1,Song\n",
+            headers={"Origin": local_origin},
+        )
+        assert imported.status == 200
+        assert json.loads(payload)["playlists"][0]["track_count"] == 1
+
+        queued, payload = request(
+            server.server_address,
+            "POST",
+            "/api/playlists/download-all",
+            token=None,
+            headers={"Origin": local_origin},
+        )
+        assert queued.status == 202
+        assert json.loads(payload)["queued"] == 1
+
         remote, _payload = request(
             server.server_address,
             "GET",
@@ -402,6 +485,16 @@ def test_lan_phone_reaches_local_web_without_a_token(tmp_path):
         )
         assert health.status == 200
         assert json.loads(payload)["ok"] is True
+
+        playlists, payload = request(
+            server.server_address,
+            "GET",
+            "/api/playlists",
+            token=None,
+            headers={"Origin": f"http://{lan_host}", "Host": lan_host},
+        )
+        assert playlists.status == 403
+        assert json.loads(payload)["error"]["code"] == "PC_ONLY"
 
         mismatched_host = f"192.168.1.50:{server.server_port + 1}"
         health, _payload = request(
