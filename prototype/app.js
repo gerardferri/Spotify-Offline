@@ -166,7 +166,15 @@ async function loadJobs() { const config = await serverConfig(); if (!config.url
 function renderJobs(jobs) { $('#jobsEmpty').hidden = jobs.length !== 0; $('#jobList').innerHTML = jobs.map(job => { const progress = Math.max(0, Math.min(100, Number(job.progress_percent || (job.state === 'completed' ? 100 : 0)))); const action = job.state === 'completed' && job.track_id ? `<button class="primary save-remote" data-track-id="${job.track_id}" data-title="${escape(job.title)}">Guardar en iPhone</button>` : ''; return `<article class="remote-job"><div class="job-head"><div><strong>${escape(job.title || 'Descarga')}</strong><small>${escape(job.channel || '')}</small></div><span class="job-state state-${escape(job.state)}">${jobLabels[job.state] || escape(job.state)}</span></div><div class="job-progress"><i style="width:${progress}%"></i></div>${job.error_message ? `<p class="job-error">${escape(job.error_message)}</p>` : ''}${action}</article>`; }).join(''); $$('.save-remote').forEach(button => button.onclick = () => saveRemoteTrack(button)); }
 async function saveRemoteTrack(button) { button.disabled = true; button.textContent = 'Copiando…'; try { const response = await api(`/api/tracks/${encodeURIComponent(button.dataset.trackId)}/audio`); const blob = await response.blob(); const safeTitle = (button.dataset.title || 'cancion').replace(/[\\/:*?"<>|]/g, '_'); const file = new File([blob], `${safeTitle}.mp3`, { type: blob.type || 'audio/mpeg' }); await importFiles([file]); button.textContent = 'Guardada'; navigate('library'); } catch (error) { showToast(error.message); button.disabled = false; button.textContent = 'Guardar en iPhone'; } }
 
+function syncPlayerClearance() {
+  const nav = $('.bottom-nav');
+  document.documentElement.style.setProperty('--bottom-nav-height', `${Math.ceil(nav.getBoundingClientRect().height)}px`);
+}
+
 function bind() {
+  syncPlayerClearance();
+  if ('ResizeObserver' in window) new ResizeObserver(syncPlayerClearance).observe($('.bottom-nav'));
+  else window.addEventListener('resize', syncPlayerClearance);
   $$('.nav-item').forEach(button => button.onclick = () => navigate(button.dataset.page));
   $('#importButton').onclick = () => $('#fileInput').click();
   $('#emptyImportButton').onclick = $('#emptyImportButton2').onclick = () => $('#fileInput').click();

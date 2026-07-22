@@ -68,3 +68,6 @@ def test_web_player_has_desktop_and_mobile_layouts() -> None:
     assert "@media(min-width:1024px){.player" in css
     assert "@media(max-width:560px){.player" in css
     assert ".player-control.is-active{color:var(--accent)}" in css
+    assert "bottom:calc(var(--bottom-nav-height,76px) + 8px)" in css
+    assert "touch-action:pan-y" in css
+    assert "syncPlayerClearance" in (PROTOTYPE / "app.js").read_text(encoding="utf-8")
