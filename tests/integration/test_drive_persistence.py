@@ -24,7 +24,7 @@ def snapshot(token: str = "changes-1") -> DriveLibrarySnapshot:
 
 def test_drive_snapshot_is_atomic_queryable_and_revisioned(tmp_path) -> None:
     database = Database(tmp_path / "drive.db")
-    assert database.migrate() == [1, 2, 3, 4]
+    assert database.migrate() == [1, 2, 3, 4, 5]
     repository = DriveRepository(database)
 
     first = repository.replace_snapshot(

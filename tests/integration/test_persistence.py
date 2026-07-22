@@ -19,7 +19,7 @@ from ytmp3studio.persistence.repositories import (
 @pytest.fixture
 def database(tmp_path):
     database = Database(tmp_path / "app.db")
-    assert database.migrate() == [1, 2, 3, 4]
+    assert database.migrate() == [1, 2, 3, 4, 5]
     return database
 
 
@@ -65,7 +65,7 @@ def test_empty_database_migrates_idempotently_and_enables_pragmas(database):
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
         assert [row[0] for row in connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()] == [1, 2, 3, 4]
+        ).fetchall()] == [1, 2, 3, 4, 5]
 
     settings = SettingsRepository(database).get()
     assert settings.quality_kbps == 192

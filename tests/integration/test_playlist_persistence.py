@@ -24,7 +24,7 @@ NOW = "2026-07-20T12:00:00.000Z"
 @pytest.fixture
 def repository(tmp_path):
     database = Database(tmp_path / "playlists.db")
-    assert database.migrate() == [1, 2, 3, 4]
+    assert database.migrate() == [1, 2, 3, 4, 5]
     return PlaylistRepository(database)
 
 
