@@ -200,8 +200,8 @@ function bind() {
     if (event.code === 'ArrowRight') { event.preventDefault(); seekBy(5); }
   };
 
-  audio.onplay = () => { $('#playerPlay').textContent = '❚❚'; $('#playerPlay').setAttribute('aria-label', 'Pausar'); $('#playerPlay').title = 'Pausar'; };
-  audio.onpause = () => { $('#playerPlay').textContent = '▶'; $('#playerPlay').setAttribute('aria-label', 'Reproducir'); $('#playerPlay').title = 'Reproducir'; };
+  audio.onplay = () => { $('#playerPlayIcon').className = 'control-icon icon-pause'; $('#playerPlay').setAttribute('aria-label', 'Pausar'); $('#playerPlay').title = 'Pausar'; };
+  audio.onpause = () => { $('#playerPlayIcon').className = 'control-icon icon-play'; $('#playerPlay').setAttribute('aria-label', 'Reproducir'); $('#playerPlay').title = 'Reproducir'; };
   audio.ontimeupdate = () => {
     updateProgress();
     if ('mediaSession' in navigator && Number.isFinite(audio.duration) && audio.duration > 0) navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: Math.min(audio.currentTime, audio.duration) });

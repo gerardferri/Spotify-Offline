@@ -84,11 +84,11 @@
     </div>
     <div class="player-main">
       <div class="player-controls" aria-label="Controles de reproducción">
-        <button class="player-control player-toggle" id="playerShuffle" type="button" aria-label="Activar reproducción aleatoria" aria-pressed="false" title="Aleatorio">⇄</button>
-        <button class="player-control" id="playerPrevious" type="button" aria-label="Canción anterior" title="Anterior">▌◀</button>
-        <button class="art-button" id="playerPlay" type="button" aria-label="Reproducir" title="Reproducir">▶</button>
-        <button class="player-control" id="playerNext" type="button" aria-label="Siguiente canción" title="Siguiente">▶▌</button>
-        <button class="player-control player-toggle repeat-control" id="playerRepeat" type="button" aria-label="Activar repetición" aria-pressed="false" data-mode="off" title="Repetir">↻<span id="repeatCount" hidden>1</span></button>
+        <button class="player-control player-toggle" id="playerShuffle" type="button" aria-label="Activar reproducción aleatoria" aria-pressed="false" title="Aleatorio"><span class="control-icon icon-shuffle" aria-hidden="true"></span></button>
+        <button class="player-control" id="playerPrevious" type="button" aria-label="Canción anterior" title="Anterior"><span class="control-icon icon-previous" aria-hidden="true"></span></button>
+        <button class="art-button" id="playerPlay" type="button" aria-label="Reproducir" title="Reproducir"><span class="control-icon icon-play" id="playerPlayIcon" aria-hidden="true"></span></button>
+        <button class="player-control" id="playerNext" type="button" aria-label="Siguiente canción" title="Siguiente"><span class="control-icon icon-next" aria-hidden="true"></span></button>
+        <button class="player-control player-toggle repeat-control" id="playerRepeat" type="button" aria-label="Activar repetición" aria-pressed="false" data-mode="off" title="Repetir"><span class="control-icon icon-repeat" aria-hidden="true"></span><span id="repeatCount" hidden>1</span></button>
       </div>
       <div class="progress-row">
         <span id="elapsed">0:00</span>
